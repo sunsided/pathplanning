@@ -1,8 +1,8 @@
 #[allow(dead_code)]
-use space_partitioning::quadtree::{AABB, QuadRect, QuadTree, QuadTreeElement};
+use space_partitioning::quadtree::{QuadRect, QuadTree, QuadTreeElement, AABB};
 #[allow(dead_code)]
 type ElementId = i32;
-use rstar::{AABB as RStarAABB, RTree, RTreeObject};
+use rstar::{RTree, RTreeObject, AABB as RStarAABB};
 
 use crate::graph::RoadGraph;
 
@@ -38,7 +38,7 @@ struct RStarEdge {
 impl RTreeObject for RStarEdge {
     type Envelope = RStarAABB<[f64; 2]>;
     fn envelope(&self) -> Self::Envelope {
-        self.envelope.clone()
+        self.envelope
     }
 }
 
@@ -50,7 +50,7 @@ struct RStarDecor {
 impl RTreeObject for RStarDecor {
     type Envelope = RStarAABB<[f64; 2]>;
     fn envelope(&self) -> Self::Envelope {
-        self.envelope.clone()
+        self.envelope
     }
 }
 
@@ -85,6 +85,7 @@ fn intersects(a: &[f64; 4], min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> b
 }
 
 #[allow(dead_code)]
+#[allow(clippy::type_complexity)]
 fn build_quant_index(
     graph: &RoadGraph,
 ) -> (

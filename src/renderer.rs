@@ -267,6 +267,7 @@ pub fn render(
     draw_debug(graph, camera, planner, pixmap);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_decorations(
     layer: &DecorationLayer,
     camera: &Camera,
@@ -328,6 +329,7 @@ fn draw_decorations(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_all_edges(
     graph: &RoadGraph,
     camera: &Camera,
@@ -362,6 +364,7 @@ fn draw_all_edges(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_explored_edges(
     graph: &RoadGraph,
     camera: &Camera,
