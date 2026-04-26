@@ -1,0 +1,19 @@
+[package]
+name = "pathplanning"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "pathplanning"
+path = "src/main.rs"
+
+[dependencies]
+winit = "0.29"
+tiny-skia = "0.11"
+osmpbfreader = "0.15"
+petgraph = "0.6"
+ordered-float = "4"
+rstar = "0.12"
+log = "0.4"
+env_logger = "0.11"
+softbuffer = "0.4"
