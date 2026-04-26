@@ -64,6 +64,11 @@ impl MenuLayout {
         }
         None
     }
+
+    pub fn hit_test_panel(&self, pos: [f32; 2]) -> bool {
+        let [px, py, pw, ph] = self.panel_rect;
+        pos[0] >= px && pos[0] <= px + pw && pos[1] >= py && pos[1] <= py + ph
+    }
 }
 
 struct ColorRGBA {

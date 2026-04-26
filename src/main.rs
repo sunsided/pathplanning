@@ -354,8 +354,13 @@ impl ApplicationHandler for App {
                             self.input_state.is_drag = false;
 
                             let hud_hit = self.debug_overlay.menu_layout.hit_test(screen_pos);
+                            let hud_panel =
+                                self.debug_overlay.menu_layout.hit_test_panel(screen_pos);
+
                             if hud_hit.is_some() {
                                 self.input_state.pressed_menu_item = hud_hit;
+                            } else if hud_panel {
+                                // Inside panel but not on an item — consume to prevent pan/marker
                             } else {
                                 let near =
                                     self.input_state.marker_near(screen_pos, 12.0, &self.camera);
@@ -378,6 +383,7 @@ impl ApplicationHandler for App {
                                         &mut self.planner,
                                         &mut self.input_state,
                                         &self.graph,
+                                        &self.camera,
                                     );
                                 }
                                 self.needs_redraw = true;
@@ -458,6 +464,7 @@ impl ApplicationHandler for App {
                     &mut self.planner,
                     &mut self.input_state,
                     &self.graph,
+                    &self.camera,
                 );
                 if handled {
                     self.needs_redraw = true;
@@ -622,6 +629,7 @@ fn apply_menu_choice(
     planner: &mut PlannerState,
     input_state: &mut InputState,
     graph: &graph::RoadGraph,
+    camera: &Camera,
 ) {
     let changed = match item {
         MenuItemKind::Algorithm(a) => {
@@ -640,7 +648,7 @@ fn apply_menu_choice(
                 false
             }
         }
-        MenuItemKind::Random => randomize_route(input_state, graph),
+        MenuItemKind::Random => randomize_route(input_state, graph, camera),
     };
 
     if !changed {
@@ -662,12 +670,24 @@ fn apply_menu_choice(
     }
 }
 
-fn randomize_route(input_state: &mut InputState, graph: &graph::RoadGraph) -> bool {
+fn randomize_route(
+    input_state: &mut InputState,
+    graph: &graph::RoadGraph,
+    camera: &Camera,
+) -> bool {
+    let (vmin_x, vmin_y, vmax_x, vmax_y) = camera.visible_world_aabb(0.0);
+
     let routable: Vec<usize> = graph
         .adjacency
         .iter()
         .enumerate()
-        .filter(|(_, edges)| !edges.is_empty())
+        .filter(|(id, edges)| {
+            if edges.is_empty() {
+                return false;
+            }
+            let pos = graph.nodes[*id].world_pos;
+            pos[0] >= vmin_x && pos[0] <= vmax_x && pos[1] >= vmin_y && pos[1] <= vmax_y
+        })
         .map(|(id, _)| id)
         .collect();
 
@@ -712,6 +732,7 @@ fn handle_keyboard_input(
     planner: &mut PlannerState,
     input_state: &mut InputState,
     graph: &graph::RoadGraph,
+    camera: &Camera,
 ) -> bool {
     let mut changed = false;
 
@@ -760,7 +781,7 @@ fn handle_keyboard_input(
             changed = true;
         }
         Key::Character(c) if c.as_str() == "r" => {
-            changed = randomize_route(input_state, graph);
+            changed = randomize_route(input_state, graph, camera);
         }
         Key::Character(c) if c.as_str() == "q" => {
             input_state.start_marker = None;
