@@ -13,7 +13,8 @@ const BBOX_MARGIN_FACTOR: f64 = 0.25;
 const BBOX_MARGIN_MIN: f64 = 500.0;
 const STALL_THRESHOLD: usize = 256;
 const BBOX_EXPAND_FACTOR: f64 = 1.5;
-const MAX_ITERATION_MULTIPLIER: usize = 10;
+const MAX_ITERATION_MULTIPLIER: usize = 3;
+const POST_MATCH_BUDGET: usize = 2000;
 const RADIUS_GAMMA_FACTOR: f64 = 2.0;
 const RADIUS_FLOOR: f64 = 50.0;
 const RADIUS_CAP: f64 = 2000.0;
@@ -34,6 +35,7 @@ pub(crate) struct RrtStarState {
     pub(crate) iterations: usize,
     pub(crate) best_goal_cost: f64,
     pub(crate) goal_bias: f64,
+    pub(crate) post_match_iterations: Option<usize>,
 }
 
 impl RrtStarState {
@@ -96,6 +98,7 @@ impl RrtStarState {
             iterations: 0,
             best_goal_cost: f64::INFINITY,
             goal_bias: GOAL_BIAS,
+            post_match_iterations: None,
         }
     }
 
@@ -146,9 +149,18 @@ fn propagate_delta(
     g_score: &mut HashMap<usize, f64>,
     children: &HashMap<usize, Vec<usize>>,
 ) {
-    let mut queue = vec![root];
+    // `root` already had its g_score updated by the caller. Only propagate
+    // the delta to descendants to avoid double-applying it to `root`.
+    let mut queue: Vec<usize> = Vec::new();
     let mut visited = HashSet::new();
     visited.insert(root);
+    if let Some(kids) = children.get(&root) {
+        for &child in kids {
+            if visited.insert(child) {
+                queue.push(child);
+            }
+        }
+    }
 
     while let Some(node) = queue.pop() {
         if let Some(old_g) = g_score.get(&node) {
@@ -227,6 +239,7 @@ pub fn step_rrt_star(state: &mut PlannerState, graph: &RoadGraph, n_steps: usize
     if state.rrt_star.is_none() {
         state.open_set.clear();
         let start = state.frontier.iter().next().copied().unwrap_or(0);
+        state.explored.insert(start);
         state.rrt_star = Some(RrtStarState::new(start, goal, graph));
     }
 
@@ -239,6 +252,9 @@ pub fn step_rrt_star(state: &mut PlannerState, graph: &RoadGraph, n_steps: usize
 
         let rrt = state.rrt_star.as_mut().unwrap();
         if rrt.rtree.size() == 0 {
+            if state.locked_path.is_some() && state.status != PlannerStatus::Done {
+                state.status = PlannerStatus::FirstMatchFound;
+            }
             state.status = PlannerStatus::Done;
             return false;
         }
@@ -249,8 +265,17 @@ pub fn step_rrt_star(state: &mut PlannerState, graph: &RoadGraph, n_steps: usize
             state.status = PlannerStatus::Done;
             return false;
         }
+        if let Some(post) = rrt.post_match_iterations
+            && post >= POST_MATCH_BUDGET
+        {
+            state.status = PlannerStatus::Done;
+            return false;
+        }
 
         rrt.iterations += 1;
+        if let Some(post) = rrt.post_match_iterations.as_mut() {
+            *post += 1;
+        }
 
         let q_rand = sample_goal(
             &mut rrt.rng,
@@ -390,6 +415,14 @@ pub fn step_rrt_star(state: &mut PlannerState, graph: &RoadGraph, n_steps: usize
             state.best_path = Some(path.clone());
             state.locked_path = Some(path.clone());
             state.fill_path_metrics(graph, &path);
+            if state.status == PlannerStatus::Searching {
+                state.status = PlannerStatus::FirstMatchFound;
+            }
+            if let Some(rrt) = state.rrt_star.as_mut()
+                && rrt.post_match_iterations.is_none()
+            {
+                rrt.post_match_iterations = Some(0);
+            }
         }
 
         if goal_in_tree && let Some(rrt) = state.rrt_star.as_mut() {
