@@ -23,3 +23,4 @@ rstar = "0.12"
 space-partitioning = "0.5.0"
 log = "0.4"
 env_logger = "0.11"
+rand = { version = "0.10", features = ["std_rng"] }
