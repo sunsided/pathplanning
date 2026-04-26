@@ -858,7 +858,19 @@ pub fn draw_hud(
     max_chars = max_chars.max("COST".len() + 2);
 
     let panel_w = max_chars as f32 * char_w + padding * 2f32;
-    let num_rows = 2 + 2 + 1 + algorithms.len() + 1 + 2 + 1 + heuristics.len() + 1 + 2 + 1 + 2;
+    let num_rows = 2
+        + 2
+        + 1
+        + algorithms.len()
+        + 1
+        + 2
+        + 1
+        + heuristics.len()
+        + 1
+        + 2
+        + 1
+        + cost_modes.len()
+        + 2;
     let panel_h = num_rows as f32 * row_h + padding * 2f32;
 
     let panel_x = width as f32 - panel_w - margin;

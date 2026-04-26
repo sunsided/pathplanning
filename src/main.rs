@@ -661,7 +661,7 @@ fn apply_menu_choice(
                 false
             }
         }
-        MenuItemKind::Swap => swap_markers(input_state, graph, planner),
+        MenuItemKind::Swap => swap_markers(input_state, graph),
         MenuItemKind::Random => randomize_route(input_state, graph, camera),
     };
 
@@ -684,31 +684,9 @@ fn apply_menu_choice(
     }
 }
 
-fn swap_markers(
-    input_state: &mut InputState,
-    _graph: &graph::RoadGraph,
-    planner: &mut PlannerState,
-) -> bool {
-    let start_node = input_state
-        .start_marker
-        .as_ref()
-        .and_then(|m| m.snapped_node);
-    let end_node = input_state.end_marker.as_ref().and_then(|m| m.snapped_node);
-
-    if let (Some(_s), Some(_e)) = (start_node, end_node) {
+fn swap_markers(input_state: &mut InputState, _graph: &graph::RoadGraph) -> bool {
+    if input_state.start_marker.is_some() && input_state.end_marker.is_some() {
         std::mem::swap(&mut input_state.start_marker, &mut input_state.end_marker);
-
-        let new_start = input_state
-            .start_marker
-            .as_ref()
-            .and_then(|m| m.snapped_node);
-        let new_end = input_state.end_marker.as_ref().and_then(|m| m.snapped_node);
-
-        if let (Some(s), Some(e)) = (new_start, new_end) {
-            if s != e {
-                planner.start_search(s, e);
-            }
-        }
         return true;
     }
     false
@@ -876,7 +854,7 @@ fn handle_keyboard_input(
             changed = randomize_route(input_state, graph, camera);
         }
         Key::Character(c) if c.as_str() == "s" => {
-            changed = swap_markers(input_state, graph, planner);
+            changed = swap_markers(input_state, graph);
         }
         Key::Character(c) if c.as_str() == "q" => {
             input_state.start_marker = None;

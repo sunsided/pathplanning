@@ -23,7 +23,7 @@ repos:
     hooks:
       - id: cargo-fmt
         name: cargo fmt
-        entry: task fmt:check
+        entry: task --taskfile Taskfile.dist.yaml fmt:check
         language: system
         pass_filenames: false
         types:
@@ -31,7 +31,7 @@ repos:
 
       - id: cargo-check
         name: cargo check
-        entry: task check
+        entry: task --taskfile Taskfile.dist.yaml check
         language: system
         pass_filenames: false
         types:
@@ -39,7 +39,7 @@ repos:
 
       - id: cargo-clippy
         name: cargo clippy
-        entry: task lint:check
+        entry: task --taskfile Taskfile.dist.yaml lint:check
         language: system
         pass_filenames: false
         types:

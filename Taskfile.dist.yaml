@@ -66,10 +66,19 @@ tasks:
   test:
     desc: Test the crate with all features
     aliases:
-      - test
       - test:all
     cmds:
       - "{{.CARGO}} test --all-features"
+
+  test:all-features:
+    desc: Test the crate with all features (alias for test)
+    cmds:
+      - "{{.CARGO}} test --all-features"
+
+  test:no-features:
+    desc: Test the crate without default features
+    cmds:
+      - "{{.CARGO}} test --no-default-features"
 
   verify:
     desc: Run formatting checks, static checks, clippy, and the test matrix
