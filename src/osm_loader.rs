@@ -75,10 +75,15 @@ fn find_tag<'a>(tags: &'a [(String, String)], key: &str) -> Option<&'a str> {
     tags.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
 }
 
-fn euclidean_dist(a: [f64; 2], b: [f64; 2]) -> f64 {
-    let dx = a[0] - b[0];
-    let dy = a[1] - b[1];
-    (dx * dx + dy * dy).sqrt()
+fn haversine_dist(a: [f64; 2], b: [f64; 2]) -> f64 {
+    const R: f64 = 6_371_000.0;
+    let dlat = (b[0] - a[0]).to_radians();
+    let dlon = (b[1] - a[1]).to_radians();
+    let lat1 = a[0].to_radians();
+    let lat2 = b[0].to_radians();
+    let a = (dlat / 2.0).sin().powi(2) + (dlon / 2.0).sin().powi(2) * lat1.cos() * lat2.cos();
+    let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
+    R * c
 }
 
 fn is_routable_highway(hw: &str) -> bool {
@@ -310,6 +315,10 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
                     .iter()
                     .map(|&gid| graph.nodes[gid].world_pos)
                     .collect();
+                let latlons: Vec<[f64; 2]> = node_ids
+                    .iter()
+                    .map(|&gid| graph.nodes[gid].lat_lon)
+                    .collect();
 
                 for i in 0..(node_ids.len() - 1) {
                     let (from, to) = if is_reverse_oneway {
@@ -322,7 +331,7 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
                     } else {
                         vec![positions[i], positions[i + 1]]
                     };
-                    let weight = euclidean_dist(positions[i], positions[i + 1]);
+                    let weight = haversine_dist(latlons[i], latlons[i + 1]);
 
                     let fwd_idx = graph.edges.len();
                     graph.edges.push(GraphEdge {
