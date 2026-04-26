@@ -101,11 +101,15 @@ Cost functions determine what the planner optimizes for. Edge costs are derived 
 
 ### Shortest Path (Distance)
 
+![A* with shortest path cost](readme/dist.png)
+
 Minimizes total travel distance in meters. Edge cost = `edge.weight_meters`.
 
 Produces the geometrically shortest route regardless of road speed limits or traffic conditions.
 
 ### Shortest Time
+
+![A* with shortest time cost](readme/time.png)
 
 Minimizes estimated travel time. Edge cost = `edge.travel_time_s + stop_penalty`.
 
