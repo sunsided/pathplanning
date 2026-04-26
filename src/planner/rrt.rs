@@ -1,11 +1,12 @@
-use rand::RngExt;
+#[cfg(test)]
 #[cfg(test)]
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
-use rstar::{AABB, PointDistance, RTree, RTreeObject};
+use rstar::RTree;
 use std::collections::{HashMap, HashSet};
 
 use crate::graph::RoadGraph;
+use crate::planner::rrt_common::{TreePoint, clamp_bbox, ensure_bbox_margin, sample_goal};
 use crate::planner::state::{PlannerState, PlannerStatus};
 
 const GOAL_BIAS: f64 = 0.05;
@@ -14,28 +15,6 @@ const BBOX_MARGIN_MIN: f64 = 500.0;
 const STALL_THRESHOLD: usize = 256;
 const BBOX_EXPAND_FACTOR: f64 = 1.5;
 const MAX_ITERATION_MULTIPLIER: usize = 10;
-
-#[derive(Clone, PartialEq)]
-pub(crate) struct TreePoint {
-    pos: [f64; 2],
-    node_id: usize,
-}
-
-impl RTreeObject for TreePoint {
-    type Envelope = AABB<[f64; 2]>;
-
-    fn envelope(&self) -> Self::Envelope {
-        AABB::from_point(self.pos)
-    }
-}
-
-impl PointDistance for TreePoint {
-    fn distance_2(&self, point: &[f64; 2]) -> f64 {
-        let dx = self.pos[0] - point[0];
-        let dy = self.pos[1] - point[1];
-        dx * dx + dy * dy
-    }
-}
 
 pub(crate) struct RrtState {
     pub(crate) rtree: RTree<TreePoint>,
@@ -157,21 +136,6 @@ impl RrtState {
     }
 }
 
-fn clamp_bbox(bbox: [f64; 2], graph_min: [f64; 2], graph_max: [f64; 2]) -> [f64; 2] {
-    [
-        bbox[0].max(graph_min[0]).min(graph_max[0]),
-        bbox[1].max(graph_min[1]).min(graph_max[1]),
-    ]
-}
-
-fn ensure_bbox_margin(min: [f64; 2], max: [f64; 2], margin: f64) -> ([f64; 2], [f64; 2]) {
-    let cx = (min[0] + max[0]) / 2.0;
-    let cy = (min[1] + max[1]) / 2.0;
-    let half_w = ((max[0] - min[0]) / 2.0).max(margin);
-    let half_h = ((max[1] - min[1]) / 2.0).max(margin);
-    ([cx - half_w, cy - half_h], [cx + half_w, cy + half_h])
-}
-
 pub fn step_rrt(state: &mut PlannerState, graph: &RoadGraph, n_steps: usize) -> bool {
     let goal = match state.goal {
         Some(g) => g,
@@ -269,24 +233,6 @@ pub fn step_rrt(state: &mut PlannerState, graph: &RoadGraph, n_steps: usize) -> 
     }
 
     state.status == PlannerStatus::Searching
-}
-
-fn sample_goal(
-    rng: &mut SmallRng,
-    bbox_min: &[f64; 2],
-    bbox_max: &[f64; 2],
-    goal: usize,
-    graph: &RoadGraph,
-    goal_bias: f64,
-) -> [f64; 2] {
-    if rng.random::<f64>() < goal_bias {
-        graph.nodes[goal].world_pos
-    } else {
-        [
-            rng.random_range(bbox_min[0]..bbox_max[0]),
-            rng.random_range(bbox_min[1]..bbox_max[1]),
-        ]
-    }
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -68,7 +68,7 @@ The top-right HUD panel provides clickable menu items to change planner configur
 
 ## Algorithms
 
-Three pathfinding algorithms are available, selectable via the `A`/`P` keys or the HUD menu:
+Four pathfinding algorithms are available, selectable via the `A`/`P` keys or the HUD menu:
 
 ### A*
 
@@ -91,6 +91,17 @@ A Rapidly-exploring Random Tree sampler that grows a tree from the start node to
 - **Focused sampling**: Samples uniformly from a workspace bbox around start and goal, expanding by 1.5× when the tree stalls (256 iterations without progress).
 - **No heuristic**: RRT is sampling-based and does not use a heuristic estimate; the heuristic menu is greyed out (same as Dijkstra).
 - **Graph-embedded**: The tree grows along existing directed road edges — "steering" means choosing the outgoing edge whose destination most reduces distance to the random sample.
+
+### RRT*
+
+An asymptotically optimal variant of RRT that improves path quality over time through **choose-parent** and **rewire** operations. **Not optimal immediately** — it starts with a feasible path like RRT but continuously refines it as more samples arrive, converging toward the optimal solution given enough iterations.
+
+- **Choose-parent**: when inserting a new node, RRT* examines all tree vertices within a dynamic radius that have an edge to the new node, and picks the parent that minimizes total path cost — not just the spatially nearest one.
+- **Rewire**: after insertion, RRT* checks whether the new node can serve as a cheaper parent for nearby tree vertices. If so, it repoints `came_from` and propagates the cost improvement to all descendants via BFS.
+- **Anytime semantics**: unlike RRT (which stops on first goal reach), RRT\* keeps searching until its iteration budget is exhausted. The `locked_path` cost decreases (or stays equal) over time as rewiring discovers cheaper routes.
+- **Graph-embedded**: rewiring is constrained to existing directed edges — we cannot draw new lines in continuous space. Gains are smaller than in free-space RRT\* but still meaningful: a node reached via a long detour can be re-parented once a shorter route materializes nearby.
+- **Dynamic radius**: the neighborhood radius shrinks as the tree densifies using `r(n) = γ × √(log(n)/n)` with `γ = 2 × avg_edge_length`, floored at 50 m and capped at 2000 m.
+- **No heuristic**: same as RRT and Dijkstra, the heuristic menu is greyed out.
 
 ## Heuristics
 
@@ -140,7 +151,7 @@ This ensures the heuristic remains consistent with the cost function, preserving
 |-----------|-------------|
 | `graph.rs` | Directed road graph with nodes, edges, and road classifications |
 | `osm_loader.rs` | OSM PBF file parser and graph construction |
-| `planner/` | Pathfinding algorithms (A*, Dijkstra, Greedy, RRT) with configurable heuristics and cost modes |
+| `planner/` | Pathfinding algorithms (A*, Dijkstra, Greedy, RRT, RRT*) with configurable heuristics and cost modes |
 | `spatial_index.rs` | Nearest-node lookup for marker snapping |
 | `view_index.rs` | R*-tree spatial index for viewport-based edge queries |
 | `lod.rs` | LOD pyramid for multi-scale rendering |
