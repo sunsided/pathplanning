@@ -278,7 +278,10 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::RedrawRequested => {
-                if self.planner.status == PlannerStatus::Searching {
+                if matches!(
+                    self.planner.status,
+                    PlannerStatus::Searching | PlannerStatus::FirstMatchFound
+                ) {
                     self.planner.step(&self.graph, 500);
                 }
                 self.render_frame();

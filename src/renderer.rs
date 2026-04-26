@@ -692,9 +692,9 @@ fn draw_debug(
     };
 
     let lod = pyramid.pick(camera.zoom);
-    let lod_label = if camera.zoom >= 0.5 {
+    let lod_label = if std::ptr::eq(lod, &pyramid.l0) {
         "L0"
-    } else if camera.zoom >= 0.05 {
+    } else if std::ptr::eq(lod, &pyramid.l1) {
         "L1"
     } else {
         "L2"

@@ -112,8 +112,8 @@ fn haversine_dist(a: [f64; 2], b: [f64; 2]) -> f64 {
     let dlon = (b[1] - a[1]).to_radians();
     let lat1 = a[0].to_radians();
     let lat2 = b[0].to_radians();
-    let a = (dlat / 2.0).sin().powi(2) + (dlon / 2.0).sin().powi(2) * lat1.cos() * lat2.cos();
-    let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
+    let hav_a = (dlat / 2.0).sin().powi(2) + (dlon / 2.0).sin().powi(2) * lat1.cos() * lat2.cos();
+    let c = 2.0 * hav_a.sqrt().atan2((1.0 - hav_a).sqrt());
     R * c
 }
 
@@ -457,7 +457,7 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
                         weight_meters: weight,
                         polyline_world: polyline.clone(),
                         road_class,
-                        one_way: true,
+                        one_way: is_one_way || is_reverse_oneway,
                     });
                     graph.adjacency[from].push(fwd_idx);
 

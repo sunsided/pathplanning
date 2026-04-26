@@ -33,6 +33,7 @@ pub struct QuadTreeViewIndex {
 
 struct RStarEdge {
     id: usize,
+    aabb_idx: usize,
     envelope: RStarAABB<[f64; 2]>,
 }
 
@@ -225,6 +226,7 @@ impl RStarViewIndex {
             edge_aabbs.push([min_x, min_y, max_x, max_y]);
             edge_items.push(RStarEdge {
                 id: i,
+                aabb_idx: i,
                 envelope: RStarAABB::from_corners([min_x, min_y], [max_x, max_y]),
             });
         }
@@ -254,6 +256,7 @@ impl RStarViewIndex {
             let id = if i < edge_ids.len() { edge_ids[i] } else { i };
             edge_items.push(RStarEdge {
                 id,
+                aabb_idx: i,
                 envelope: RStarAABB::from_corners([aabb[0], aabb[1]], [aabb[2], aabb[3]]),
             });
         }
@@ -287,6 +290,7 @@ impl RStarViewIndex {
         for (i, aabb) in edge_aabbs.iter().enumerate() {
             edge_items.push(RStarEdge {
                 id: i,
+                aabb_idx: i,
                 envelope: RStarAABB::from_corners([aabb[0], aabb[1]], [aabb[2], aabb[3]]),
             });
         }
@@ -334,7 +338,7 @@ impl RStarViewIndex {
         self.edge_tree
             .locate_in_envelope_intersecting(&envelope)
             .for_each(|item| {
-                if intersects(&self.edge_aabbs[item.id], min_x, min_y, max_x, max_y) {
+                if intersects(&self.edge_aabbs[item.aabb_idx], min_x, min_y, max_x, max_y) {
                     out.push(item.id);
                 }
             });
