@@ -1204,6 +1204,7 @@ dependencies = [
  "petgraph",
  "rstar",
  "softbuffer",
+ "space-partitioning",
  "tiny-skia",
  "winit",
 ]
@@ -1623,6 +1624,15 @@ dependencies = [
  "web-sys",
  "windows-sys 0.61.2",
  "x11rb",
+]
+
+[[package]]
+name = "space-partitioning"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57706441676dbae8236602a7a7a3a856f011d0ceaa5aaeb070c05a7bcf7b1126"
+dependencies = [
+ "smallvec",
 ]
 
 [[package]]

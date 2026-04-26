@@ -13,11 +13,13 @@ mod osm_loader;
 mod projection;
 mod renderer;
 mod spatial_index;
+mod view_index;
 
 use astar::{PlannerState, PlannerStatus};
 use camera::Camera;
 use input::{InputState, Marker, MarkerKind};
 use spatial_index::SpatialIndex;
+use view_index::QuadTreeViewIndex;
 
 fn main() {
     env_logger::init();
@@ -46,6 +48,7 @@ fn main() {
 
     // Build spatial index.
     let spatial_index = SpatialIndex::build(&graph);
+    let view_index = QuadTreeViewIndex::build(&graph);
 
     // Initialise input and planner state.
     let mut input_state = InputState::new();
@@ -111,7 +114,14 @@ fn main() {
                                 None => return,
                             };
 
-                            renderer::render(&graph, &camera, &planner, &input_state, &mut pixmap);
+                            renderer::render(
+                                &graph,
+                                &camera,
+                                &planner,
+                                &input_state,
+                                &view_index,
+                                &mut pixmap,
+                            );
 
                             // Present to screen via softbuffer.
                             if let (Some(w), Some(h)) =

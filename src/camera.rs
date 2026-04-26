@@ -61,4 +61,16 @@ impl Camera {
         self.center[0] += world_before[0] - world_after[0];
         self.center[1] += world_before[1] - world_after[1];
     }
+
+    /// World-space AABB of the visible viewport, with an optional pixel margin.
+    /// Returns (min_x, min_y, max_x, max_y).
+    pub fn visible_world_aabb(&self, margin_px: f32) -> (f64, f64, f64, f64) {
+        let half_w = (self.screen_width * 0.5 + margin_px) as f64 / self.zoom;
+        let half_h = (self.screen_height * 0.5 + margin_px) as f64 / self.zoom;
+        let min_x = self.center[0] - half_w;
+        let max_x = self.center[0] + half_w;
+        let min_y = self.center[1] - half_h;
+        let max_y = self.center[1] + half_h;
+        (min_x, min_y, max_x, max_y)
+    }
 }

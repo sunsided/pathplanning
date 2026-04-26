@@ -2,6 +2,7 @@ use crate::astar::{PlannerState, PlannerStatus};
 use crate::camera::Camera;
 use crate::graph::{DecorationKind, DecorationLayer, RoadClass, RoadGraph};
 use crate::input::InputState;
+use crate::view_index::ViewportIndex;
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
 #[derive(Clone, Copy)]
@@ -192,19 +193,35 @@ pub fn render(
     camera: &Camera,
     planner: &PlannerState,
     input_state: &InputState,
+    view_index: &impl ViewportIndex,
     pixmap: &mut Pixmap,
 ) {
     // Background.
     pixmap.fill(Color::from_rgba8(10, 14, 26, 255));
 
+    let (vmin_x, vmin_y, vmax_x, vmax_y) = camera.visible_world_aabb(32.0);
+
     // Layer 0: decoration fills (buildings, landuse, plazas) — behind everything.
-    draw_decorations(&graph.decorations, camera, pixmap);
+    draw_decorations(
+        &graph.decorations,
+        camera,
+        view_index,
+        vmin_x,
+        vmin_y,
+        vmax_x,
+        vmax_y,
+        pixmap,
+    );
 
     // Layer 1: all road edges (static).
-    draw_all_edges(graph, camera, pixmap);
+    draw_all_edges(
+        graph, camera, view_index, vmin_x, vmin_y, vmax_x, vmax_y, pixmap,
+    );
 
     // Layer 2: explored (closed-set) edges.
-    draw_explored_edges(graph, camera, planner, pixmap);
+    draw_explored_edges(
+        graph, camera, planner, view_index, vmin_x, vmin_y, vmax_x, vmax_y, pixmap,
+    );
 
     // Layer 3: frontier (open-set) nodes.
     draw_frontier(graph, camera, planner, pixmap);
@@ -250,13 +267,24 @@ pub fn render(
     draw_debug(graph, camera, planner, pixmap);
 }
 
-fn draw_decorations(layer: &DecorationLayer, camera: &Camera, pixmap: &mut Pixmap) {
+fn draw_decorations(
+    layer: &DecorationLayer,
+    camera: &Camera,
+    view_index: &impl ViewportIndex,
+    vmin_x: f64,
+    vmin_y: f64,
+    vmax_x: f64,
+    vmax_y: f64,
+    pixmap: &mut Pixmap,
+) {
     if camera.zoom < 0.3 {
         return;
     }
     let skip_buildings = camera.zoom < 1.0;
 
-    for shape in &layer.shapes {
+    let visible_ids = view_index.decorations_in(vmin_x, vmin_y, vmax_x, vmax_y);
+    for &idx in &visible_ids {
+        let shape = &layer.shapes[idx];
         if skip_buildings && shape.kind == DecorationKind::Building {
             continue;
         }
@@ -274,7 +302,6 @@ fn draw_decorations(layer: &DecorationLayer, camera: &Camera, pixmap: &mut Pixma
                 camera,
                 ColorRGBA { r, g, b, a },
             );
-            // Outline for buildings.
             if shape.kind == DecorationKind::Building {
                 stroke_polyline(
                     pixmap,
@@ -301,8 +328,19 @@ fn draw_decorations(layer: &DecorationLayer, camera: &Camera, pixmap: &mut Pixma
     }
 }
 
-fn draw_all_edges(graph: &RoadGraph, camera: &Camera, pixmap: &mut Pixmap) {
-    for edge in &graph.edges {
+fn draw_all_edges(
+    graph: &RoadGraph,
+    camera: &Camera,
+    view_index: &impl ViewportIndex,
+    vmin_x: f64,
+    vmin_y: f64,
+    vmax_x: f64,
+    vmax_y: f64,
+    pixmap: &mut Pixmap,
+) {
+    let visible_ids = view_index.edges_in(vmin_x, vmin_y, vmax_x, vmax_y);
+    for &idx in &visible_ids {
+        let edge = &graph.edges[idx];
         let width = edge.road_class.stroke_width();
         let (er, eg, eb) = match edge.road_class {
             RoadClass::Motorway => (40, 60, 100),
@@ -328,12 +366,19 @@ fn draw_explored_edges(
     graph: &RoadGraph,
     camera: &Camera,
     planner: &PlannerState,
+    view_index: &impl ViewportIndex,
+    vmin_x: f64,
+    vmin_y: f64,
+    vmax_x: f64,
+    vmax_y: f64,
     pixmap: &mut Pixmap,
 ) {
     if planner.explored.is_empty() {
         return;
     }
-    for edge in &graph.edges {
+    let visible_ids = view_index.edges_in(vmin_x, vmin_y, vmax_x, vmax_y);
+    for &idx in &visible_ids {
+        let edge = &graph.edges[idx];
         if planner.explored.contains(&edge.from) && planner.explored.contains(&edge.to) {
             stroke_polyline(
                 pixmap,
