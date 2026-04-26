@@ -366,16 +366,15 @@ impl ApplicationHandler for App {
                                 self.input_state.dragging = None;
                             } else if !self.input_state.is_drag {
                                 let click_pos = self.input_state.press_pos;
-                                if place_marker(
+                                let _started_search = place_marker(
                                     &mut self.input_state,
                                     &mut self.planner,
                                     click_pos,
                                     &self.camera,
                                     &self.spatial_index,
                                     &self.graph,
-                                ) {
-                                    self.needs_redraw = true;
-                                }
+                                );
+                                self.needs_redraw = true;
                             }
 
                             self.input_state.pan_start = None;
