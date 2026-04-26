@@ -56,7 +56,7 @@ impl Camera {
     /// Zoom around a screen-space point, keeping that point fixed in world space.
     pub fn zoom_around(&mut self, screen_pos: [f32; 2], factor: f64) {
         let world_before = self.screen_to_world(screen_pos);
-        self.zoom = (self.zoom * factor).clamp(1e-7, 1e3);
+        self.zoom = (self.zoom * factor).clamp(0.007, 2.0);
         let world_after = self.screen_to_world(screen_pos);
         self.center[0] += world_before[0] - world_after[0];
         self.center[1] += world_before[1] - world_after[1];
