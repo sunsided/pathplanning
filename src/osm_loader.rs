@@ -1,15 +1,22 @@
-use crate::graph::{DecorationKind, DecorationLayer, DecorationShape, GraphEdge, GraphNode, RoadClass, RoadGraph};
+use crate::graph::{
+    DecorationKind, DecorationLayer, DecorationShape, GraphEdge, GraphNode, RoadClass, RoadGraph,
+};
 use crate::projection::latlon_to_world;
 use osmpbfreader::{OsmObj, OsmPbfReader};
 use std::collections::HashMap;
 
 /// Routable highway tags (car/vehicle profile).
 const ROUTABLE_HIGHWAYS: &[&str] = &[
-    "motorway", "motorway_link",
-    "trunk",    "trunk_link",
-    "primary",  "primary_link",
-    "secondary","secondary_link",
-    "tertiary", "tertiary_link",
+    "motorway",
+    "motorway_link",
+    "trunk",
+    "trunk_link",
+    "primary",
+    "primary_link",
+    "secondary",
+    "secondary_link",
+    "tertiary",
+    "tertiary_link",
     "residential",
     "unclassified",
     "living_street",
@@ -22,16 +29,34 @@ const ROUTABLE_HIGHWAYS: &[&str] = &[
 /// accepting `ROUTABLE_HIGHWAYS` and specific decoration cases.
 #[allow(dead_code)]
 const DROPPED_HIGHWAYS: &[&str] = &[
-    "footway", "path", "cycleway", "bridleway", "steps", "corridor", "track",
-    "pedestrian", "bus_guideway", "raceway",
-    "proposed", "construction", "planned",
+    "footway",
+    "path",
+    "cycleway",
+    "bridleway",
+    "steps",
+    "corridor",
+    "track",
+    "pedestrian",
+    "bus_guideway",
+    "raceway",
+    "proposed",
+    "construction",
+    "planned",
 ];
 
 /// Landuse values to load as decoration polygons.
 const LANDUSE_KEEP: &[&str] = &[
-    "residential", "commercial", "industrial", "retail",
-    "forest", "grass", "park", "meadow",
-    "recreation_ground", "cemetery", "railway",
+    "residential",
+    "commercial",
+    "industrial",
+    "retail",
+    "forest",
+    "grass",
+    "park",
+    "meadow",
+    "recreation_ground",
+    "cemetery",
+    "railway",
 ];
 
 /// Service values that disqualify a way from being routable.
@@ -57,7 +82,9 @@ fn is_rejected_access(tags: &osmpbfreader::Tags) -> bool {
 }
 
 fn is_motor_barred(tags: &osmpbfreader::Tags) -> bool {
-    tags.get("motor_vehicle").map(|v| v == "no").unwrap_or(false)
+    tags.get("motor_vehicle")
+        .map(|v| v == "no")
+        .unwrap_or(false)
         || tags.get("vehicle").map(|v| v == "no").unwrap_or(false)
 }
 
@@ -71,7 +98,10 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
     log::info!("Loading OSM PBF from: {}", path);
 
     let file = std::fs::File::open(path)?;
-    let mut pbf = OsmPbfReader::new(file);
+    // SAFETY: map file is read-only and not modified while mapped.
+    let mmap = unsafe { memmap2::Mmap::map(&file)? };
+    let cursor = std::io::Cursor::new(&mmap[..]);
+    let mut pbf = OsmPbfReader::new(cursor);
 
     // Collect ways we care about: routable highways, buildings, landuse, pedestrian areas.
     let objs = pbf.get_objs_and_deps(|obj| match obj {
