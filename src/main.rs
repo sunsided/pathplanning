@@ -376,7 +376,8 @@ impl ApplicationHandler for App {
                                     apply_menu_choice(
                                         pressed,
                                         &mut self.planner,
-                                        &self.input_state,
+                                        &mut self.input_state,
+                                        &self.graph,
                                     );
                                 }
                                 self.needs_redraw = true;
@@ -616,7 +617,12 @@ fn dist2(a: [f32; 2], b: [f32; 2]) -> f32 {
     dx * dx + dy * dy
 }
 
-fn apply_menu_choice(item: MenuItemKind, planner: &mut PlannerState, input_state: &InputState) {
+fn apply_menu_choice(
+    item: MenuItemKind,
+    planner: &mut PlannerState,
+    input_state: &mut InputState,
+    graph: &graph::RoadGraph,
+) {
     let changed = match item {
         MenuItemKind::Algorithm(a) => {
             if planner.config.algorithm != a {
@@ -634,6 +640,7 @@ fn apply_menu_choice(item: MenuItemKind, planner: &mut PlannerState, input_state
                 false
             }
         }
+        MenuItemKind::Random => randomize_route(input_state, graph),
     };
 
     if !changed {
@@ -653,6 +660,51 @@ fn apply_menu_choice(item: MenuItemKind, planner: &mut PlannerState, input_state
     } else {
         planner.reset();
     }
+}
+
+fn randomize_route(input_state: &mut InputState, graph: &graph::RoadGraph) -> bool {
+    let routable: Vec<usize> = graph
+        .adjacency
+        .iter()
+        .enumerate()
+        .filter(|(_, edges)| !edges.is_empty())
+        .map(|(id, _)| id)
+        .collect();
+
+    if routable.len() < 2 {
+        return false;
+    }
+
+    let mut seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    let mut rng = |max: usize| -> usize {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed as usize) % max
+    };
+
+    let start_idx = rng(routable.len());
+    let mut end_idx = rng(routable.len());
+    while end_idx == start_idx {
+        end_idx = rng(routable.len());
+    }
+
+    let start_node = routable[start_idx];
+    let end_node = routable[end_idx];
+
+    input_state.start_marker = Some(Marker {
+        world_pos: graph.nodes[start_node].world_pos,
+        snapped_node: Some(start_node),
+    });
+    input_state.end_marker = Some(Marker {
+        world_pos: graph.nodes[end_node].world_pos,
+        snapped_node: Some(end_node),
+    });
+
+    true
 }
 
 fn handle_keyboard_input(
@@ -708,46 +760,7 @@ fn handle_keyboard_input(
             changed = true;
         }
         Key::Character(c) if c.as_str() == "r" => {
-            let routable: Vec<usize> = graph
-                .adjacency
-                .iter()
-                .enumerate()
-                .filter(|(_, edges)| !edges.is_empty())
-                .map(|(id, _)| id)
-                .collect();
-
-            if routable.len() >= 2 {
-                let mut seed = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos() as u64;
-                let mut rng = |max: usize| -> usize {
-                    seed ^= seed << 13;
-                    seed ^= seed >> 7;
-                    seed ^= seed << 17;
-                    (seed as usize) % max
-                };
-
-                let start_idx = rng(routable.len());
-                let mut end_idx = rng(routable.len());
-                while end_idx == start_idx {
-                    end_idx = rng(routable.len());
-                }
-
-                let start_node = routable[start_idx];
-                let end_node = routable[end_idx];
-
-                input_state.start_marker = Some(Marker {
-                    world_pos: graph.nodes[start_node].world_pos,
-                    snapped_node: Some(start_node),
-                });
-                input_state.end_marker = Some(Marker {
-                    world_pos: graph.nodes[end_node].world_pos,
-                    snapped_node: Some(end_node),
-                });
-
-                changed = true;
-            }
+            changed = randomize_route(input_state, graph);
         }
         Key::Character(c) if c.as_str() == "q" => {
             input_state.start_marker = None;
