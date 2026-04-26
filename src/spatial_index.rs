@@ -28,9 +28,20 @@ pub struct SpatialIndex {
 
 impl SpatialIndex {
     pub fn build(graph: &RoadGraph) -> Self {
+        // Only index nodes that actually participate in a routable edge.
+        // `graph.nodes` also contains decoration-only nodes (building/landuse
+        // corners) which have empty adjacency; snapping to one of those would
+        // give A* a source/target with no outgoing edges.
         let points: Vec<NodePoint> = graph
             .nodes
             .iter()
+            .filter(|n| {
+                graph
+                    .adjacency
+                    .get(n.id)
+                    .map(|adj| !adj.is_empty())
+                    .unwrap_or(false)
+            })
             .map(|n| NodePoint {
                 pos: n.world_pos,
                 node_id: n.id,
