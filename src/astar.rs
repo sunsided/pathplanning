@@ -100,6 +100,10 @@ impl PlannerState {
             if self.status == PlannerStatus::Done {
                 return false;
             }
+            if self.status == PlannerStatus::FirstMatchFound {
+                self.status = PlannerStatus::Done;
+                return false;
+            }
 
             let entry = match self.open_set.pop() {
                 Some(e) => e,
@@ -127,7 +131,6 @@ impl PlannerState {
                 if self.status == PlannerStatus::Searching {
                     self.status = PlannerStatus::FirstMatchFound;
                 }
-                self.status = PlannerStatus::Done;
                 return false;
             }
 

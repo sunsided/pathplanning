@@ -17,6 +17,7 @@ pub(crate) const MARGIN_FRACTION: f64 = 0.01;
 
 pub trait ViewportIndex {
     fn edges_in(&self, min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Vec<usize>;
+    #[allow(dead_code)]
     fn decorations_in(&self, min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Vec<usize>;
 }
 
@@ -32,6 +33,7 @@ pub struct QuadTreeViewIndex {
 
 struct RStarEdge {
     id: usize,
+    aabb_idx: usize,
     envelope: RStarAABB<[f64; 2]>,
 }
 
@@ -224,6 +226,7 @@ impl RStarViewIndex {
             edge_aabbs.push([min_x, min_y, max_x, max_y]);
             edge_items.push(RStarEdge {
                 id: i,
+                aabb_idx: i,
                 envelope: RStarAABB::from_corners([min_x, min_y], [max_x, max_y]),
             });
         }
@@ -246,34 +249,117 @@ impl RStarViewIndex {
             decor_aabbs,
         }
     }
+
+    pub fn build_from_raw_aabbs(edge_aabbs: Vec<[f64; 4]>, edge_ids: Vec<usize>) -> Self {
+        let mut edge_items = Vec::with_capacity(edge_aabbs.len());
+        for (i, aabb) in edge_aabbs.iter().enumerate() {
+            let id = if i < edge_ids.len() { edge_ids[i] } else { i };
+            edge_items.push(RStarEdge {
+                id,
+                aabb_idx: i,
+                envelope: RStarAABB::from_corners([aabb[0], aabb[1]], [aabb[2], aabb[3]]),
+            });
+        }
+        Self {
+            edge_tree: RTree::bulk_load(edge_items),
+            decor_tree: RTree::bulk_load(Vec::new()),
+            edge_aabbs,
+            decor_aabbs: Vec::new(),
+        }
+    }
+
+    pub fn build_decor_only(decor_aabbs: Vec<[f64; 4]>) -> Self {
+        let mut decor_items = Vec::with_capacity(decor_aabbs.len());
+        for (i, aabb) in decor_aabbs.iter().enumerate() {
+            decor_items.push(RStarDecor {
+                id: i,
+                envelope: RStarAABB::from_corners([aabb[0], aabb[1]], [aabb[2], aabb[3]]),
+            });
+        }
+        Self {
+            edge_tree: RTree::bulk_load(Vec::new()),
+            decor_tree: RTree::bulk_load(decor_items),
+            edge_aabbs: Vec::new(),
+            decor_aabbs,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn build_from_aabbs(edge_aabbs: Vec<[f64; 4]>, decor_aabbs: Vec<[f64; 4]>) -> Self {
+        let mut edge_items = Vec::with_capacity(edge_aabbs.len());
+        for (i, aabb) in edge_aabbs.iter().enumerate() {
+            edge_items.push(RStarEdge {
+                id: i,
+                aabb_idx: i,
+                envelope: RStarAABB::from_corners([aabb[0], aabb[1]], [aabb[2], aabb[3]]),
+            });
+        }
+        let mut decor_items = Vec::with_capacity(decor_aabbs.len());
+        for (i, aabb) in decor_aabbs.iter().enumerate() {
+            decor_items.push(RStarDecor {
+                id: i,
+                envelope: RStarAABB::from_corners([aabb[0], aabb[1]], [aabb[2], aabb[3]]),
+            });
+        }
+        Self {
+            edge_tree: RTree::bulk_load(edge_items),
+            decor_tree: RTree::bulk_load(decor_items),
+            edge_aabbs,
+            decor_aabbs,
+        }
+    }
 }
 
 impl ViewportIndex for RStarViewIndex {
     fn edges_in(&self, min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Vec<usize> {
-        let envelope = RStarAABB::from_corners([min_x, min_y], [max_x, max_y]);
-        self.edge_tree
-            .locate_in_envelope_intersecting(&envelope)
-            .filter_map(|item| {
-                if intersects(&self.edge_aabbs[item.id], min_x, min_y, max_x, max_y) {
-                    Some(item.id)
-                } else {
-                    None
-                }
-            })
-            .collect()
+        let mut buf = Vec::new();
+        self.edges_in_into(min_x, min_y, max_x, max_y, &mut buf);
+        buf
     }
 
     fn decorations_in(&self, min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Vec<usize> {
+        let mut buf = Vec::new();
+        self.decorations_in_into(min_x, min_y, max_x, max_y, &mut buf);
+        buf
+    }
+}
+
+impl RStarViewIndex {
+    pub fn edges_in_into(
+        &self,
+        min_x: f64,
+        min_y: f64,
+        max_x: f64,
+        max_y: f64,
+        out: &mut Vec<usize>,
+    ) {
+        out.clear();
+        let envelope = RStarAABB::from_corners([min_x, min_y], [max_x, max_y]);
+        self.edge_tree
+            .locate_in_envelope_intersecting(&envelope)
+            .for_each(|item| {
+                if intersects(&self.edge_aabbs[item.aabb_idx], min_x, min_y, max_x, max_y) {
+                    out.push(item.id);
+                }
+            });
+    }
+
+    pub fn decorations_in_into(
+        &self,
+        min_x: f64,
+        min_y: f64,
+        max_x: f64,
+        max_y: f64,
+        out: &mut Vec<usize>,
+    ) {
+        out.clear();
         let envelope = RStarAABB::from_corners([min_x, min_y], [max_x, max_y]);
         self.decor_tree
             .locate_in_envelope_intersecting(&envelope)
-            .filter_map(|item| {
+            .for_each(|item| {
                 if intersects(&self.decor_aabbs[item.id], min_x, min_y, max_x, max_y) {
-                    Some(item.id)
-                } else {
-                    None
+                    out.push(item.id);
                 }
-            })
-            .collect()
+            });
     }
 }

@@ -29,6 +29,7 @@ impl RoadClass {
         }
     }
 
+    #[allow(dead_code)]
     pub fn stroke_width(&self) -> f32 {
         match self {
             RoadClass::Motorway => 3.0,
@@ -69,6 +70,7 @@ pub enum DecorationKind {
     Landuse,
     PedestrianArea,
     ServiceArea,
+    Water,
 }
 
 /// A single decoration shape — either a closed polygon or an open polyline.

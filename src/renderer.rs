@@ -1,11 +1,27 @@
 use crate::astar::{PlannerState, PlannerStatus};
 use crate::camera::Camera;
-use crate::graph::{DecorationKind, DecorationLayer, RoadClass, RoadGraph};
+use crate::graph::{DecorationKind, RoadClass, RoadGraph};
 use crate::input::InputState;
+use crate::lod::LodPyramid;
 use crate::view_index::ViewportIndex;
-use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
+use std::fmt::Write;
 
-#[derive(Clone, Copy)]
+use vello::kurbo::{Affine, BezPath, Circle, Stroke};
+use vello::peniko::{Color, Fill};
+use vello::Scene;
+
+pub struct DebugOverlayState {
+    pub line_buf: String,
+}
+
+impl Default for DebugOverlayState {
+    fn default() -> Self {
+        Self {
+            line_buf: String::with_capacity(64),
+        }
+    }
+}
+
 struct ColorRGBA {
     r: u8,
     g: u8,
@@ -13,9 +29,18 @@ struct ColorRGBA {
     a: u8,
 }
 
+impl From<ColorRGBA> for Color {
+    fn from(c: ColorRGBA) -> Self {
+        Color::from_rgba8(c.r, c.g, c.b, c.a)
+    }
+}
+
+fn rgba(r: u8, g: u8, b: u8, a: u8) -> Color {
+    Color::from_rgba8(r, g, b, a)
+}
+
 // ---------------------------------------------------------------------------
-// Minimal 8×8 bitmap font (row-major, MSB = leftmost pixel).
-// Only covers the characters needed for the debug overlay.
+// Minimal 8×8 bitmap font rendered as rects.
 // ---------------------------------------------------------------------------
 
 fn get_glyph(c: u8) -> [u8; 8] {
@@ -61,42 +86,85 @@ fn get_glyph(c: u8) -> [u8; 8] {
         b'X' => [0x66, 0x66, 0x3C, 0x18, 0x3C, 0x66, 0x66, 0x00],
         b'Y' => [0x66, 0x66, 0x3C, 0x18, 0x18, 0x18, 0x18, 0x00],
         b'Z' => [0x7E, 0x06, 0x0C, 0x18, 0x30, 0x60, 0x7E, 0x00],
+        b'a' => [0x00, 0x00, 0x3C, 0x06, 0x3E, 0x66, 0x3E, 0x00],
+        b'b' => [0x60, 0x60, 0x7C, 0x66, 0x66, 0x66, 0x7C, 0x00],
+        b'c' => [0x00, 0x00, 0x3C, 0x60, 0x60, 0x60, 0x3C, 0x00],
+        b'd' => [0x06, 0x06, 0x3E, 0x66, 0x66, 0x66, 0x3E, 0x00],
+        b'e' => [0x00, 0x00, 0x3C, 0x66, 0x7E, 0x60, 0x3C, 0x00],
+        b'f' => [0x1C, 0x30, 0x30, 0x7C, 0x30, 0x30, 0x30, 0x00],
+        b'g' => [0x00, 0x00, 0x3E, 0x66, 0x66, 0x3E, 0x06, 0x3C],
+        b'h' => [0x60, 0x60, 0x7C, 0x66, 0x66, 0x66, 0x66, 0x00],
+        b'i' => [0x18, 0x00, 0x38, 0x18, 0x18, 0x18, 0x3C, 0x00],
+        b'j' => [0x06, 0x00, 0x06, 0x06, 0x06, 0x06, 0x66, 0x3C],
+        b'k' => [0x60, 0x60, 0x6C, 0x78, 0x78, 0x6C, 0x66, 0x00],
+        b'l' => [0x38, 0x18, 0x18, 0x18, 0x18, 0x18, 0x3C, 0x00],
+        b'm' => [0x00, 0x00, 0x66, 0x7F, 0x7F, 0x6B, 0x63, 0x00],
+        b'n' => [0x00, 0x00, 0x7C, 0x66, 0x66, 0x66, 0x66, 0x00],
+        b'o' => [0x00, 0x00, 0x3C, 0x66, 0x66, 0x66, 0x3C, 0x00],
+        b'p' => [0x00, 0x00, 0x7C, 0x66, 0x66, 0x7C, 0x60, 0x60],
+        b'q' => [0x00, 0x00, 0x3E, 0x66, 0x66, 0x3E, 0x06, 0x06],
+        b'r' => [0x00, 0x00, 0x6C, 0x76, 0x60, 0x60, 0x60, 0x00],
+        b's' => [0x00, 0x00, 0x3E, 0x60, 0x3C, 0x06, 0x7C, 0x00],
+        b't' => [0x30, 0x30, 0x7C, 0x30, 0x30, 0x30, 0x1C, 0x00],
+        b'u' => [0x00, 0x00, 0x66, 0x66, 0x66, 0x66, 0x3E, 0x00],
+        b'v' => [0x00, 0x00, 0x66, 0x66, 0x66, 0x3C, 0x18, 0x00],
+        b'w' => [0x00, 0x00, 0x63, 0x6B, 0x7F, 0x77, 0x63, 0x00],
+        b'x' => [0x00, 0x00, 0x66, 0x3C, 0x18, 0x3C, 0x66, 0x00],
+        b'y' => [0x00, 0x00, 0x66, 0x66, 0x66, 0x3E, 0x06, 0x3C],
+        b'z' => [0x00, 0x00, 0x7E, 0x0C, 0x18, 0x30, 0x7E, 0x00],
         _ => [0x00; 8],
     }
 }
 
-/// Draw a single 8×8 glyph at pixel coordinates (x, y) using direct pixel writes.
-fn draw_glyph(pixmap: &mut Pixmap, x: i32, y: i32, glyph: [u8; 8], r: u8, g: u8, b: u8) {
-    let pw = pixmap.width() as i32;
-    let ph = pixmap.height() as i32;
-    let data = pixmap.data_mut();
-
+fn draw_glyph(scene: &mut Scene, x: f32, y: f32, glyph: [u8; 8], color: Color) {
+    use vello::kurbo::PathEl;
+    let mut path = BezPath::new();
     for row in 0..8i32 {
         let byte = glyph[row as usize];
         for col in 0..8i32 {
             if byte & (0x80u8 >> col as u8) != 0 {
-                let px = x + col;
-                let py = y + row;
-                if px >= 0 && px < pw && py >= 0 && py < ph {
-                    // tiny-skia stores pixels as premultiplied RGBA in memory order
-                    // with the layout [r, g, b, a] (confirmed by PremultipliedColorU8 accessors).
-                    let idx = ((py * pw + px) * 4) as usize;
-                    data[idx] = r;
-                    data[idx + 1] = g;
-                    data[idx + 2] = b;
-                    data[idx + 3] = 255;
-                }
+                let px = x as f64 + col as f64;
+                let py = y as f64 + row as f64;
+                path.push(PathEl::MoveTo(vello::kurbo::Point::new(px, py)));
+                path.push(PathEl::LineTo(vello::kurbo::Point::new(px + 1.0, py)));
+                path.push(PathEl::LineTo(vello::kurbo::Point::new(px + 1.0, py + 1.0)));
+                path.push(PathEl::LineTo(vello::kurbo::Point::new(px, py + 1.0)));
+                path.push(PathEl::ClosePath);
             }
         }
     }
+    scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &path);
 }
 
-/// Draw an ASCII string starting at (x, y) with each character 9 pixels wide.
-fn draw_text(pixmap: &mut Pixmap, x: i32, y: i32, text: &str, r: u8, g: u8, b: u8) {
+fn draw_text(scene: &mut Scene, x: f32, y: f32, text: &str, color: Color) {
     let mut cx = x;
     for c in text.bytes() {
-        draw_glyph(pixmap, cx, y, get_glyph(c), r, g, b);
-        cx += 9;
+        draw_glyph(scene, cx, y, get_glyph(c), color);
+        cx += 9.0;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scratch buffers reused across frames to avoid per-frame allocations
+// ---------------------------------------------------------------------------
+
+type FillStyle = (u8, u8, u8, u8);
+type StrokeStyle = (u8, u8, u8, u8, f32);
+type EdgeStyle = (u8, u8, u8, f32);
+
+pub struct RenderScratch {
+    pub edge_buf: Vec<usize>,
+    pub decor_buf: Vec<usize>,
+    pub screen_pts: Vec<[f32; 2]>,
+}
+
+impl Default for RenderScratch {
+    fn default() -> Self {
+        Self {
+            edge_buf: Vec::with_capacity(4096),
+            decor_buf: Vec::with_capacity(4096),
+            screen_pts: Vec::with_capacity(256),
+        }
     }
 }
 
@@ -104,127 +172,68 @@ fn draw_text(pixmap: &mut Pixmap, x: i32, y: i32, text: &str, r: u8, g: u8, b: u
 // Path helpers
 // ---------------------------------------------------------------------------
 
-fn circle_path(cx: f32, cy: f32, radius: f32) -> Option<tiny_skia::Path> {
-    const K: f32 = 0.552_284_8;
-    let r = radius;
-    let mut pb = PathBuilder::new();
-    pb.move_to(cx + r, cy);
-    pb.cubic_to(cx + r, cy - K * r, cx + K * r, cy - r, cx, cy - r);
-    pb.cubic_to(cx - K * r, cy - r, cx - r, cy - K * r, cx - r, cy);
-    pb.cubic_to(cx - r, cy + K * r, cx - K * r, cy + r, cx, cy + r);
-    pb.cubic_to(cx + K * r, cy + r, cx + r, cy + K * r, cx + r, cy);
-    pb.close();
-    pb.finish()
-}
-
-fn fill_circle(pixmap: &mut Pixmap, cx: f32, cy: f32, radius: f32, color: ColorRGBA) {
-    if let Some(path) = circle_path(cx, cy, radius) {
-        let mut paint = Paint::default();
-        paint.set_color_rgba8(color.r, color.g, color.b, color.a);
-        pixmap.fill_path(
-            &path,
-            &paint,
-            FillRule::Winding,
-            Transform::identity(),
-            None,
-        );
+fn screen_path(points: &[[f32; 2]], closed: bool) -> BezPath {
+    let mut path = BezPath::new();
+    if points.is_empty() {
+        return path;
     }
-}
-
-fn fill_polygon(pixmap: &mut Pixmap, points: &[[f64; 2]], camera: &Camera, color: ColorRGBA) {
-    if points.len() < 2 {
-        return;
+    path.move_to(vello::kurbo::Point::new(
+        points[0][0] as f64,
+        points[0][1] as f64,
+    ));
+    for &p in &points[1..] {
+        path.line_to(vello::kurbo::Point::new(p[0] as f64, p[1] as f64));
     }
-    let mut pb = PathBuilder::new();
-    let sp0 = camera.world_to_screen(points[0]);
-    pb.move_to(sp0[0], sp0[1]);
-    for &wp in &points[1..] {
-        let sp = camera.world_to_screen(wp);
-        pb.line_to(sp[0], sp[1]);
+    if closed {
+        path.close_path();
     }
-    pb.close();
-    if let Some(path) = pb.finish() {
-        let mut paint = Paint::default();
-        paint.set_color_rgba8(color.r, color.g, color.b, color.a);
-        pixmap.fill_path(
-            &path,
-            &paint,
-            FillRule::EvenOdd,
-            Transform::identity(),
-            None,
-        );
-    }
-}
-
-fn stroke_polyline(
-    pixmap: &mut Pixmap,
-    points: &[[f64; 2]],
-    camera: &Camera,
-    color: ColorRGBA,
-    width: f32,
-) {
-    if points.len() < 2 {
-        return;
-    }
-    let mut pb = PathBuilder::new();
-    let sp0 = camera.world_to_screen(points[0]);
-    pb.move_to(sp0[0], sp0[1]);
-    for &wp in &points[1..] {
-        let sp = camera.world_to_screen(wp);
-        pb.line_to(sp[0], sp[1]);
-    }
-    if let Some(path) = pb.finish() {
-        let mut paint = Paint::default();
-        paint.set_color_rgba8(color.r, color.g, color.b, color.a);
-        let stroke = Stroke {
-            width,
-            ..Default::default()
-        };
-        pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
-    }
+    path
 }
 
 // ---------------------------------------------------------------------------
 // Public render entry point
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 pub fn render(
     graph: &RoadGraph,
     camera: &Camera,
     planner: &PlannerState,
     input_state: &InputState,
     view_index: &impl ViewportIndex,
-    pixmap: &mut Pixmap,
+    pyramid: &LodPyramid,
+    scene: &mut Scene,
+    debug_overlay: &mut DebugOverlayState,
+    scratch: &mut RenderScratch,
+    width: u32,
+    _height: u32,
 ) {
-    // Background.
-    pixmap.fill(Color::from_rgba8(10, 14, 26, 255));
-
     let (vmin_x, vmin_y, vmax_x, vmax_y) = camera.visible_world_aabb(32.0);
 
+    let lod = pyramid.pick(camera.zoom);
+
     // Layer 0: decoration fills (buildings, landuse, plazas) — behind everything.
-    draw_decorations(
-        &graph.decorations,
+    draw_decorations_lod(lod, camera, vmin_x, vmin_y, vmax_x, vmax_y, scene, scratch);
+
+    // Layer 1: all road edges (static).
+    draw_all_edges_lod(lod, camera, vmin_x, vmin_y, vmax_x, vmax_y, scene, scratch);
+
+    // Layer 2: explored (closed-set) edges.
+    draw_explored_edges(
+        graph,
         camera,
+        planner,
         view_index,
         vmin_x,
         vmin_y,
         vmax_x,
         vmax_y,
-        pixmap,
-    );
-
-    // Layer 1: all road edges (static).
-    draw_all_edges(
-        graph, camera, view_index, vmin_x, vmin_y, vmax_x, vmax_y, pixmap,
-    );
-
-    // Layer 2: explored (closed-set) edges.
-    draw_explored_edges(
-        graph, camera, planner, view_index, vmin_x, vmin_y, vmax_x, vmax_y, pixmap,
+        scene,
+        &mut scratch.screen_pts,
     );
 
     // Layer 3: frontier (open-set) nodes.
-    draw_frontier(graph, camera, planner, pixmap);
+    draw_frontier(graph, camera, planner, scene, width);
 
     // Layer 4: current best path (neon cyan).
     if let Some(ref path) = planner.best_path {
@@ -232,7 +241,7 @@ pub fn render(
             graph,
             camera,
             path,
-            pixmap,
+            scene,
             ColorRGBA {
                 r: 0,
                 g: 255,
@@ -249,7 +258,7 @@ pub fn render(
             graph,
             camera,
             path,
-            pixmap,
+            scene,
             ColorRGBA {
                 r: 0,
                 g: 128,
@@ -261,105 +270,233 @@ pub fn render(
     }
 
     // Layer 6: markers.
-    draw_markers(camera, input_state, pixmap);
+    draw_markers(camera, input_state, scene);
 
     // Layer 7: debug overlay.
-    draw_debug(graph, camera, planner, pixmap);
+    draw_debug(graph, camera, planner, pyramid, scene, debug_overlay);
+}
+
+fn decor_fill_style(kind: DecorationKind) -> (u8, u8, u8, u8) {
+    match kind {
+        DecorationKind::Building => (26, 31, 46, 180),
+        DecorationKind::Landuse => (20, 24, 34, 160),
+        DecorationKind::PedestrianArea => (28, 30, 40, 150),
+        DecorationKind::ServiceArea => (20, 24, 34, 140),
+        DecorationKind::Water => (22, 58, 110, 220),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_decorations(
-    layer: &DecorationLayer,
+fn draw_decorations_lod(
+    lod: &crate::lod::LodLevel,
     camera: &Camera,
-    view_index: &impl ViewportIndex,
     vmin_x: f64,
     vmin_y: f64,
     vmax_x: f64,
     vmax_y: f64,
-    pixmap: &mut Pixmap,
+    scene: &mut Scene,
+    scratch: &mut RenderScratch,
 ) {
-    if camera.zoom < 0.3 {
+    if lod.decorations.is_empty() {
         return;
     }
-    let skip_buildings = camera.zoom < 1.0;
 
-    let visible_ids = view_index.decorations_in(vmin_x, vmin_y, vmax_x, vmax_y);
-    for &idx in &visible_ids {
-        let shape = &layer.shapes[idx];
-        if skip_buildings && shape.kind == DecorationKind::Building {
+    lod.decor_index
+        .decorations_in_into(vmin_x, vmin_y, vmax_x, vmax_y, &mut scratch.decor_buf);
+
+    let zoom = camera.zoom;
+    let min_screen_dim = 0.3;
+
+    let mut fill_paths: Vec<(FillStyle, BezPath)> = Vec::new();
+    let mut stroke_paths: Vec<(StrokeStyle, BezPath)> = Vec::new();
+
+    for &idx in scratch.decor_buf.iter() {
+        let decor = &lod.decorations[idx];
+        let a = &decor.aabb;
+        let aw = (a[2] - a[0]) * zoom;
+        let ah = (a[3] - a[1]) * zoom;
+        if aw.max(ah) < min_screen_dim {
             continue;
         }
-        let (r, g, b, a) = match shape.kind {
-            DecorationKind::Building => (26, 31, 46, 180),
-            DecorationKind::Landuse => (20, 24, 34, 160),
-            DecorationKind::PedestrianArea => (28, 30, 40, 150),
-            DecorationKind::ServiceArea => (20, 24, 34, 140),
-        };
 
-        if shape.closed {
-            fill_polygon(
-                pixmap,
-                &shape.polyline_world,
-                camera,
-                ColorRGBA { r, g, b, a },
-            );
-            if shape.kind == DecorationKind::Building {
-                stroke_polyline(
-                    pixmap,
-                    &shape.polyline_world,
-                    camera,
-                    ColorRGBA {
-                        r: 36,
-                        g: 42,
-                        b: 58,
-                        a: 200,
-                    },
-                    0.8,
-                );
-            }
-        } else {
-            stroke_polyline(
-                pixmap,
-                &shape.polyline_world,
-                camera,
-                ColorRGBA { r, g, b, a },
-                0.8,
-            );
+        let pts = &decor.polyline_world;
+        if pts.len() < 2 {
+            continue;
         }
+
+        scratch.screen_pts.clear();
+        let mut smin_x = f32::INFINITY;
+        let mut smin_y = f32::INFINITY;
+        let mut smax_x = f32::NEG_INFINITY;
+        let mut smax_y = f32::NEG_INFINITY;
+
+        for &wp in pts {
+            let sp = camera.world_to_screen(wp);
+            scratch.screen_pts.push(sp);
+            smin_x = smin_x.min(sp[0]);
+            smin_y = smin_y.min(sp[1]);
+            smax_x = smax_x.max(sp[0]);
+            smax_y = smax_y.max(sp[1]);
+        }
+
+        let is_too_small = (smax_x - smin_x) < 0.5 && (smax_y - smin_y) < 0.5;
+        if decor.closed && is_too_small {
+            continue;
+        }
+
+        let fill_style = decor_fill_style(decor.kind);
+
+        if decor.closed {
+            let path = screen_path(&scratch.screen_pts, true);
+            let fill_entry = fill_paths.iter_mut().find(|(s, _)| *s == fill_style);
+            if let Some((_, existing)) = fill_entry {
+                existing.extend(path.iter());
+            } else {
+                fill_paths.push((fill_style, path));
+            }
+
+            if decor.kind == DecorationKind::Building {
+                let stroke_style = (36u8, 42u8, 58u8, 200u8, 0.8f32);
+                let stroke_entry = stroke_paths.iter_mut().find(|(s, _)| *s == stroke_style);
+                let stroke_path = screen_path(&scratch.screen_pts, true);
+                if let Some((_, existing)) = stroke_entry {
+                    existing.extend(stroke_path.iter());
+                } else {
+                    stroke_paths.push((stroke_style, stroke_path));
+                }
+            }
+        } else if !is_too_small {
+            let stroke_width = if decor.kind == DecorationKind::Water {
+                1.6f32
+            } else {
+                0.8f32
+            };
+            let stroke_style = (
+                fill_style.0,
+                fill_style.1,
+                fill_style.2,
+                fill_style.3,
+                stroke_width,
+            );
+            let stroke_entry = stroke_paths.iter_mut().find(|(s, _)| *s == stroke_style);
+            let stroke_path = screen_path(&scratch.screen_pts, false);
+            if let Some((_, existing)) = stroke_entry {
+                existing.extend(stroke_path.iter());
+            } else {
+                stroke_paths.push((stroke_style, stroke_path));
+            }
+        }
+    }
+
+    for ((r, g, b, a), path) in fill_paths {
+        scene.fill(
+            Fill::EvenOdd,
+            Affine::IDENTITY,
+            rgba(r, g, b, a),
+            None,
+            &path,
+        );
+    }
+
+    for ((r, g, b, a, width), path) in stroke_paths {
+        scene.stroke(
+            &Stroke::new(width as f64),
+            Affine::IDENTITY,
+            rgba(r, g, b, a),
+            None,
+            &path,
+        );
+    }
+}
+
+fn edge_style(rc: RoadClass) -> EdgeStyle {
+    match rc {
+        RoadClass::Motorway => (40, 60, 100, 3.0),
+        RoadClass::Primary => (30, 55, 90, 2.5),
+        RoadClass::Secondary => (26, 58, 92, 2.0),
+        RoadClass::Tertiary => (26, 58, 92, 1.5),
+        RoadClass::Residential => (26, 58, 92, 1.2),
+        RoadClass::Service => (26, 58, 92, 1.0),
+        RoadClass::Path => (26, 58, 92, 0.8),
+        RoadClass::Other => (26, 58, 92, 0.8),
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_all_edges(
-    graph: &RoadGraph,
+fn draw_all_edges_lod(
+    lod: &crate::lod::LodLevel,
     camera: &Camera,
-    view_index: &impl ViewportIndex,
     vmin_x: f64,
     vmin_y: f64,
     vmax_x: f64,
     vmax_y: f64,
-    pixmap: &mut Pixmap,
+    scene: &mut Scene,
+    scratch: &mut RenderScratch,
 ) {
-    let visible_ids = view_index.edges_in(vmin_x, vmin_y, vmax_x, vmax_y);
-    for &idx in &visible_ids {
-        let edge = &graph.edges[idx];
-        let width = edge.road_class.stroke_width();
-        let (er, eg, eb) = match edge.road_class {
-            RoadClass::Motorway => (40, 60, 100),
-            RoadClass::Primary => (30, 55, 90),
-            _ => (26, 58, 92),
-        };
-        stroke_polyline(
-            pixmap,
-            &edge.polyline_world,
-            camera,
-            ColorRGBA {
-                r: er,
-                g: eg,
-                b: eb,
-                a: 200,
-            },
-            width,
+    if lod.edges.is_empty() {
+        return;
+    }
+
+    lod.edge_index
+        .edges_in_into(vmin_x, vmin_y, vmax_x, vmax_y, &mut scratch.edge_buf);
+
+    let zoom = camera.zoom;
+    let min_screen_dim = 0.3;
+
+    let mut paths_by_style: Vec<(EdgeStyle, BezPath)> = Vec::new();
+
+    for &idx in scratch.edge_buf.iter() {
+        let edge = &lod.edges[idx];
+        let a = &edge.aabb;
+        let aw = (a[2] - a[0]) * zoom;
+        let ah = (a[3] - a[1]) * zoom;
+        if aw.max(ah) < min_screen_dim {
+            continue;
+        }
+
+        let style = edge_style(edge.road_class);
+
+        scratch.screen_pts.clear();
+        let mut min_x = f32::INFINITY;
+        let mut min_y = f32::INFINITY;
+        let mut max_x = f32::NEG_INFINITY;
+        let mut max_y = f32::NEG_INFINITY;
+
+        let pts = &edge.polyline_world;
+        if pts.len() < 2 {
+            continue;
+        }
+
+        for &wp in pts {
+            let sp = camera.world_to_screen(wp);
+            scratch.screen_pts.push(sp);
+            min_x = min_x.min(sp[0]);
+            min_y = min_y.min(sp[1]);
+            max_x = max_x.max(sp[0]);
+            max_y = max_y.max(sp[1]);
+        }
+
+        if (max_x - min_x) < 0.5 && (max_y - min_y) < 0.5 {
+            continue;
+        }
+
+        let path = screen_path(&scratch.screen_pts, false);
+        let entry = paths_by_style.iter_mut().find(|(s, _)| *s == style);
+
+        if let Some((_, existing)) = entry {
+            existing.extend(path.iter());
+        } else {
+            paths_by_style.push((style, path));
+        }
+    }
+
+    for ((r, g, b, width), path) in paths_by_style {
+        scene.stroke(
+            &Stroke::new(width as f64),
+            Affine::IDENTITY,
+            rgba(r, g, b, 200),
+            None,
+            &path,
         );
     }
 }
@@ -374,48 +511,92 @@ fn draw_explored_edges(
     vmin_y: f64,
     vmax_x: f64,
     vmax_y: f64,
-    pixmap: &mut Pixmap,
+    scene: &mut Scene,
+    screen_pts: &mut Vec<[f32; 2]>,
 ) {
     if planner.explored.is_empty() {
         return;
     }
     let visible_ids = view_index.edges_in(vmin_x, vmin_y, vmax_x, vmax_y);
+
+    let mut path = BezPath::new();
+    let mut started = false;
+
     for &idx in &visible_ids {
         let edge = &graph.edges[idx];
-        if planner.explored.contains(&edge.from) && planner.explored.contains(&edge.to) {
-            stroke_polyline(
-                pixmap,
-                &edge.polyline_world,
-                camera,
-                ColorRGBA {
-                    r: 30,
-                    g: 77,
-                    b: 122,
-                    a: 180,
-                },
-                1.2,
-            );
+        if !planner.explored.contains(&edge.from) || !planner.explored.contains(&edge.to) {
+            continue;
         }
+
+        let pts = &edge.polyline_world;
+        if pts.len() < 2 {
+            continue;
+        }
+
+        screen_pts.clear();
+        let mut smin_x = f32::INFINITY;
+        let mut smin_y = f32::INFINITY;
+        let mut smax_x = f32::NEG_INFINITY;
+        let mut smax_y = f32::NEG_INFINITY;
+
+        for &wp in pts {
+            let sp = camera.world_to_screen(wp);
+            screen_pts.push(sp);
+            smin_x = smin_x.min(sp[0]);
+            smin_y = smin_y.min(sp[1]);
+            smax_x = smax_x.max(sp[0]);
+            smax_y = smax_y.max(sp[1]);
+        }
+
+        if (smax_x - smin_x) < 0.5 && (smax_y - smin_y) < 0.5 {
+            continue;
+        }
+
+        path.move_to(vello::kurbo::Point::new(
+            screen_pts[0][0] as f64,
+            screen_pts[0][1] as f64,
+        ));
+        for &sp in &screen_pts[1..] {
+            path.line_to(vello::kurbo::Point::new(sp[0] as f64, sp[1] as f64));
+        }
+        started = true;
+    }
+
+    if started {
+        scene.stroke(
+            &Stroke::new(1.2),
+            Affine::IDENTITY,
+            rgba(30, 77, 122, 180),
+            None,
+            &path,
+        );
     }
 }
 
-fn draw_frontier(graph: &RoadGraph, camera: &Camera, planner: &PlannerState, pixmap: &mut Pixmap) {
+fn draw_frontier(
+    graph: &RoadGraph,
+    camera: &Camera,
+    planner: &PlannerState,
+    scene: &mut Scene,
+    width: u32,
+) {
+    let pw = width as f32;
+    let radius = 3.0;
+    let color = Color::from_rgba8(0, 212, 255, 200);
     for &node_id in &planner.frontier {
         if node_id >= graph.nodes.len() {
             continue;
         }
         let sp = camera.world_to_screen(graph.nodes[node_id].world_pos);
-        fill_circle(
-            pixmap,
-            sp[0],
-            sp[1],
-            2.5,
-            ColorRGBA {
-                r: 0,
-                g: 212,
-                b: 255,
-                a: 200,
-            },
+        if sp[0] < -radius || sp[0] > pw + radius {
+            continue;
+        }
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            color,
+            None,
+            &Circle::new((sp[0] as f64, sp[1] as f64), 2.5),
         );
     }
 }
@@ -424,7 +605,7 @@ fn draw_node_path(
     graph: &RoadGraph,
     camera: &Camera,
     path: &[usize],
-    pixmap: &mut Pixmap,
+    scene: &mut Scene,
     color: ColorRGBA,
     width: f32,
 ) {
@@ -432,7 +613,7 @@ fn draw_node_path(
         return;
     }
     let n = graph.nodes.len();
-    let mut pb = PathBuilder::new();
+    let mut bez = BezPath::new();
     let mut started = false;
     for &nid in path {
         if nid >= n {
@@ -440,83 +621,68 @@ fn draw_node_path(
         }
         let sp = camera.world_to_screen(graph.nodes[nid].world_pos);
         if !started {
-            pb.move_to(sp[0], sp[1]);
+            bez.move_to(vello::kurbo::Point::new(sp[0] as f64, sp[1] as f64));
             started = true;
         } else {
-            pb.line_to(sp[0], sp[1]);
+            bez.line_to(vello::kurbo::Point::new(sp[0] as f64, sp[1] as f64));
         }
     }
-    if let Some(path_geom) = pb.finish() {
-        let mut paint = Paint::default();
-        paint.set_color_rgba8(color.r, color.g, color.b, color.a);
-        let stroke = Stroke {
-            width,
-            ..Default::default()
-        };
-        pixmap.stroke_path(&path_geom, &paint, &stroke, Transform::identity(), None);
-    }
+    scene.stroke(
+        &Stroke::new(width as f64),
+        Affine::IDENTITY,
+        Color::from(color),
+        None,
+        &bez,
+    );
 }
 
-fn draw_markers(camera: &Camera, input_state: &InputState, pixmap: &mut Pixmap) {
+fn draw_markers(camera: &Camera, input_state: &InputState, scene: &mut Scene) {
     if let Some(ref m) = input_state.start_marker {
         let sp = camera.world_to_screen(m.world_pos);
-        fill_circle(
-            pixmap,
-            sp[0],
-            sp[1],
-            7.0,
-            ColorRGBA {
-                r: 0,
-                g: 255,
-                b: 128,
-                a: 230,
-            },
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            rgba(0, 255, 128, 230),
+            None,
+            &Circle::new((sp[0] as f64, sp[1] as f64), 7.0),
         );
-        fill_circle(
-            pixmap,
-            sp[0],
-            sp[1],
-            3.0,
-            ColorRGBA {
-                r: 255,
-                g: 255,
-                b: 255,
-                a: 255,
-            },
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            rgba(255, 255, 255, 255),
+            None,
+            &Circle::new((sp[0] as f64, sp[1] as f64), 3.0),
         );
     }
     if let Some(ref m) = input_state.end_marker {
         let sp = camera.world_to_screen(m.world_pos);
-        fill_circle(
-            pixmap,
-            sp[0],
-            sp[1],
-            7.0,
-            ColorRGBA {
-                r: 255,
-                g: 0,
-                b: 170,
-                a: 230,
-            },
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            rgba(255, 0, 170, 230),
+            None,
+            &Circle::new((sp[0] as f64, sp[1] as f64), 7.0),
         );
-        fill_circle(
-            pixmap,
-            sp[0],
-            sp[1],
-            3.0,
-            ColorRGBA {
-                r: 255,
-                g: 255,
-                b: 255,
-                a: 255,
-            },
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            rgba(255, 255, 255, 255),
+            None,
+            &Circle::new((sp[0] as f64, sp[1] as f64), 3.0),
         );
     }
 }
 
-fn draw_debug(graph: &RoadGraph, camera: &Camera, planner: &PlannerState, pixmap: &mut Pixmap) {
-    let mut y = 8i32;
-    let x = 8i32;
+fn draw_debug(
+    graph: &RoadGraph,
+    camera: &Camera,
+    planner: &PlannerState,
+    pyramid: &LodPyramid,
+    scene: &mut Scene,
+    state: &mut DebugOverlayState,
+) {
+    let mut y = 8f32;
+    let x = 8f32;
 
     let status_str = match planner.status {
         PlannerStatus::Idle => "IDLE",
@@ -525,21 +691,39 @@ fn draw_debug(graph: &RoadGraph, camera: &Camera, planner: &PlannerState, pixmap
         PlannerStatus::Done => "DONE",
     };
 
-    let lines: [String; 7] = [
-        format!("NODES: {}", graph.node_count()),
-        format!("EDGES: {}", graph.edge_count()),
-        format!("DECOR: {}", graph.decorations.shapes.len()),
-        format!("ZOOM: {:.4}", camera.zoom),
-        format!("STATUS: {}", status_str),
-        format!("EXPANDED: {}", planner.expanded_count),
-        format!("PATH: {:.0}M", planner.locked_path_dist),
-    ];
+    let lod = pyramid.pick(camera.zoom);
+    let lod_label = if std::ptr::eq(lod, &pyramid.l0) {
+        "L0"
+    } else if std::ptr::eq(lod, &pyramid.l1) {
+        "L1"
+    } else {
+        "L2"
+    };
 
-    for line in &lines {
-        // Shadow.
-        draw_text(pixmap, x + 1, y + 1, line, 0, 0, 0);
-        // Text in light cyan.
-        draw_text(pixmap, x, y, line, 180, 220, 255);
-        y += 12;
+    let buf = &mut state.line_buf;
+
+    let text_color = rgba(180, 220, 255, 255);
+    let shadow_color = rgba(0, 0, 0, 255);
+
+    macro_rules! emit_line {
+        ($($arg:tt)*) => {{
+            buf.clear();
+            let _ = write!(buf, $($arg)*);
+            draw_text(scene, x + 1.0, y + 1.0, buf.as_str(), shadow_color);
+            draw_text(scene, x, y, buf.as_str(), text_color);
+            y += 12.0;
+            let _ = y;
+        }};
     }
+
+    emit_line!("NODES: {}", graph.node_count());
+    emit_line!("EDGES: {}", graph.edge_count());
+    emit_line!("DECOR: {}", graph.decorations.shapes.len());
+    emit_line!("ZOOM: {:.4}", camera.zoom);
+    emit_line!("LOD: {}", lod_label);
+    emit_line!("EDGES_LOD: {}", lod.edges.len());
+    emit_line!("DECOR_LOD: {}", lod.decorations.len());
+    emit_line!("STATUS: {}", status_str);
+    emit_line!("EXPANDED: {}", planner.expanded_count);
+    emit_line!("PATH: {:.0}M", planner.locked_path_dist);
 }
