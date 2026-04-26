@@ -1,8 +1,8 @@
 #[allow(dead_code)]
-use space_partitioning::quadtree::{QuadRect, QuadTree, QuadTreeElement, AABB};
+use space_partitioning::quadtree::{AABB, QuadRect, QuadTree, QuadTreeElement};
 #[allow(dead_code)]
 type ElementId = i32;
-use rstar::{RTree, RTreeObject, AABB as RStarAABB};
+use rstar::{AABB as RStarAABB, RTree, RTreeObject};
 
 use crate::graph::RoadGraph;
 

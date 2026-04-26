@@ -24,7 +24,7 @@ pub fn simplify_dp(points: &[[f64; 2]], eps: f64) -> Vec<[f64; 2]> {
     points
         .iter()
         .zip(use_point.iter())
-        .filter(|(_, &used)| used)
+        .filter(|&(_, &used)| used)
         .map(|(&p, _)| p)
         .collect()
 }

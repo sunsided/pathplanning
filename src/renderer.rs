@@ -7,9 +7,9 @@ use crate::planner::state::{Algorithm, CostMode, PlannerConfig, PlannerState, Pl
 use crate::view_index::ViewportIndex;
 use std::fmt::Write;
 
+use vello::Scene;
 use vello::kurbo::{Affine, BezPath, Circle, Stroke};
 use vello::peniko::{Color, Fill};
-use vello::Scene;
 
 pub struct DebugOverlayState {
     pub line_buf: String,

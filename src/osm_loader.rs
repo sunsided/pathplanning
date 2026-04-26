@@ -175,15 +175,15 @@ fn way_passes_filter<'a>(tags: impl Iterator<Item = (&'a str, &'a str)>) -> bool
             return true;
         }
     }
-    if let Some(n) = natural_val {
-        if n == "water" || n == "wetland" {
-            return true;
-        }
+    if let Some(n) = natural_val
+        && (n == "water" || n == "wetland")
+    {
+        return true;
     }
-    if let Some(ww) = waterway {
-        if WATERWAY_KEEP.contains(&ww) {
-            return true;
-        }
+    if let Some(ww) = waterway
+        && WATERWAY_KEEP.contains(&ww)
+    {
+        return true;
     }
     false
 }
@@ -390,100 +390,100 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
 
     // Process ways — routable edges and decoration shapes.
     for way in &ways {
-        if let Some(hw_tag) = find_tag(&way.tags, "highway") {
-            if is_routable_highway(hw_tag) {
-                let is_area = find_tag(&way.tags, "area") == Some("yes");
-                if is_area
-                    || is_rejected_access(&way.tags)
-                    || is_motor_barred(&way.tags)
-                    || is_rejected_service(&way.tags)
-                {
-                    build_decoration_shape(
-                        &way.node_refs,
-                        &osm_node_to_graph,
-                        &graph.nodes,
-                        &mut graph.decorations,
-                        DecorationKind::ServiceArea,
-                    );
-                    continue;
-                }
-
-                let road_class = RoadClass::from_tag(hw_tag);
-
-                let oneway_tag = find_tag(&way.tags, "oneway");
-                let junction_tag = find_tag(&way.tags, "junction");
-                let is_one_way = oneway_tag == Some("yes")
-                    || oneway_tag == Some("1")
-                    || oneway_tag == Some("true")
-                    || junction_tag == Some("roundabout");
-                let is_reverse_oneway = oneway_tag == Some("-1") || oneway_tag == Some("reverse");
-
-                let node_ids: Vec<usize> = way
-                    .node_refs
-                    .iter()
-                    .filter_map(|nid| osm_node_to_graph.get(nid).copied())
-                    .collect();
-
-                if node_ids.len() < 2 {
-                    continue;
-                }
-
-                let positions: Vec<[f64; 2]> = node_ids
-                    .iter()
-                    .map(|&gid| graph.nodes[gid].world_pos)
-                    .collect();
-                let latlons: Vec<[f64; 2]> = node_ids
-                    .iter()
-                    .map(|&gid| graph.nodes[gid].lat_lon)
-                    .collect();
-
-                for i in 0..(node_ids.len() - 1) {
-                    let (from, to) = if is_reverse_oneway {
-                        (node_ids[i + 1], node_ids[i])
-                    } else {
-                        (node_ids[i], node_ids[i + 1])
-                    };
-                    let polyline = if is_reverse_oneway {
-                        vec![positions[i + 1], positions[i]]
-                    } else {
-                        vec![positions[i], positions[i + 1]]
-                    };
-                    let weight = haversine_dist(latlons[i], latlons[i + 1]);
-                    let speed_mps = road_class.default_speed_kmh() * 1000.0 / 3600.0;
-                    let travel_time = weight / speed_mps;
-
-                    let fwd_idx = graph.edges.len();
-                    graph.edges.push(GraphEdge {
-                        from,
-                        to,
-                        weight_meters: weight,
-                        travel_time_s: travel_time,
-                        polyline_world: polyline.clone(),
-                        road_class,
-                        one_way: is_one_way || is_reverse_oneway,
-                    });
-                    graph.adjacency[from].push(fwd_idx);
-
-                    if !is_one_way && !is_reverse_oneway {
-                        let rev_idx = graph.edges.len();
-                        graph.edges.push(GraphEdge {
-                            from: to,
-                            to: from,
-                            weight_meters: weight,
-                            travel_time_s: travel_time,
-                            polyline_world: {
-                                let mut rev = polyline.clone();
-                                rev.reverse();
-                                rev
-                            },
-                            road_class,
-                            one_way: false,
-                        });
-                        graph.adjacency[to].push(rev_idx);
-                    }
-                }
+        if let Some(hw_tag) = find_tag(&way.tags, "highway")
+            && is_routable_highway(hw_tag)
+        {
+            let is_area = find_tag(&way.tags, "area") == Some("yes");
+            if is_area
+                || is_rejected_access(&way.tags)
+                || is_motor_barred(&way.tags)
+                || is_rejected_service(&way.tags)
+            {
+                build_decoration_shape(
+                    &way.node_refs,
+                    &osm_node_to_graph,
+                    &graph.nodes,
+                    &mut graph.decorations,
+                    DecorationKind::ServiceArea,
+                );
                 continue;
             }
+
+            let road_class = RoadClass::from_tag(hw_tag);
+
+            let oneway_tag = find_tag(&way.tags, "oneway");
+            let junction_tag = find_tag(&way.tags, "junction");
+            let is_one_way = oneway_tag == Some("yes")
+                || oneway_tag == Some("1")
+                || oneway_tag == Some("true")
+                || junction_tag == Some("roundabout");
+            let is_reverse_oneway = oneway_tag == Some("-1") || oneway_tag == Some("reverse");
+
+            let node_ids: Vec<usize> = way
+                .node_refs
+                .iter()
+                .filter_map(|nid| osm_node_to_graph.get(nid).copied())
+                .collect();
+
+            if node_ids.len() < 2 {
+                continue;
+            }
+
+            let positions: Vec<[f64; 2]> = node_ids
+                .iter()
+                .map(|&gid| graph.nodes[gid].world_pos)
+                .collect();
+            let latlons: Vec<[f64; 2]> = node_ids
+                .iter()
+                .map(|&gid| graph.nodes[gid].lat_lon)
+                .collect();
+
+            for i in 0..(node_ids.len() - 1) {
+                let (from, to) = if is_reverse_oneway {
+                    (node_ids[i + 1], node_ids[i])
+                } else {
+                    (node_ids[i], node_ids[i + 1])
+                };
+                let polyline = if is_reverse_oneway {
+                    vec![positions[i + 1], positions[i]]
+                } else {
+                    vec![positions[i], positions[i + 1]]
+                };
+                let weight = haversine_dist(latlons[i], latlons[i + 1]);
+                let speed_mps = road_class.default_speed_kmh() * 1000.0 / 3600.0;
+                let travel_time = weight / speed_mps;
+
+                let fwd_idx = graph.edges.len();
+                graph.edges.push(GraphEdge {
+                    from,
+                    to,
+                    weight_meters: weight,
+                    travel_time_s: travel_time,
+                    polyline_world: polyline.clone(),
+                    road_class,
+                    one_way: is_one_way || is_reverse_oneway,
+                });
+                graph.adjacency[from].push(fwd_idx);
+
+                if !is_one_way && !is_reverse_oneway {
+                    let rev_idx = graph.edges.len();
+                    graph.edges.push(GraphEdge {
+                        from: to,
+                        to: from,
+                        weight_meters: weight,
+                        travel_time_s: travel_time,
+                        polyline_world: {
+                            let mut rev = polyline.clone();
+                            rev.reverse();
+                            rev
+                        },
+                        road_class,
+                        one_way: false,
+                    });
+                    graph.adjacency[to].push(rev_idx);
+                }
+            }
+            continue;
         }
 
         if find_tag(&way.tags, "building").is_some() {
@@ -496,17 +496,17 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
             );
             continue;
         }
-        if let Some(lu) = find_tag(&way.tags, "landuse") {
-            if LANDUSE_KEEP.contains(&lu) {
-                build_decoration_shape(
-                    &way.node_refs,
-                    &osm_node_to_graph,
-                    &graph.nodes,
-                    &mut graph.decorations,
-                    DecorationKind::Landuse,
-                );
-                continue;
-            }
+        if let Some(lu) = find_tag(&way.tags, "landuse")
+            && LANDUSE_KEEP.contains(&lu)
+        {
+            build_decoration_shape(
+                &way.node_refs,
+                &osm_node_to_graph,
+                &graph.nodes,
+                &mut graph.decorations,
+                DecorationKind::Landuse,
+            );
+            continue;
         }
         if find_tag(&way.tags, "highway") == Some("pedestrian")
             && find_tag(&way.tags, "area") == Some("yes")
@@ -522,20 +522,20 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
         }
 
         let mut is_water = false;
-        if let Some(n) = find_tag(&way.tags, "natural") {
-            if n == "water" || n == "wetland" {
-                is_water = true;
-            }
+        if let Some(n) = find_tag(&way.tags, "natural")
+            && (n == "water" || n == "wetland")
+        {
+            is_water = true;
         }
-        if let Some(lu) = find_tag(&way.tags, "landuse") {
-            if lu == "reservoir" {
-                is_water = true;
-            }
+        if let Some(lu) = find_tag(&way.tags, "landuse")
+            && lu == "reservoir"
+        {
+            is_water = true;
         }
-        if let Some(ww) = find_tag(&way.tags, "waterway") {
-            if WATERWAY_KEEP.contains(&ww) {
-                is_water = true;
-            }
+        if let Some(ww) = find_tag(&way.tags, "waterway")
+            && WATERWAY_KEEP.contains(&ww)
+        {
+            is_water = true;
         }
         if is_water {
             build_decoration_shape(
@@ -562,10 +562,10 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
         for rel in &water_relations {
             let mut segments: Vec<Vec<i64>> = Vec::new();
             for &wid in &rel.outer_way_ids {
-                if let Some(w) = ways_by_id.get(&wid) {
-                    if w.node_refs.len() >= 2 {
-                        segments.push(w.node_refs.clone());
-                    }
+                if let Some(w) = ways_by_id.get(&wid)
+                    && w.node_refs.len() >= 2
+                {
+                    segments.push(w.node_refs.clone());
                 }
             }
             let rings = stitch_rings(&mut segments);
@@ -633,10 +633,10 @@ fn build_decoration_shape(
 ) {
     let mut polyline_world: Vec<[f64; 2]> = Vec::with_capacity(node_refs.len());
     for &nid in node_refs {
-        if let Some(&gid) = osm_node_to_graph.get(&nid) {
-            if gid < graph_nodes.len() {
-                polyline_world.push(graph_nodes[gid].world_pos);
-            }
+        if let Some(&gid) = osm_node_to_graph.get(&nid)
+            && gid < graph_nodes.len()
+        {
+            polyline_world.push(graph_nodes[gid].world_pos);
         }
     }
     if polyline_world.len() < 2 {

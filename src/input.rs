@@ -69,15 +69,15 @@ impl InputState {
             let dy = sp[1] - screen_pos[1];
             (dx * dx + dy * dy).sqrt() < threshold_px
         };
-        if let Some(ref m) = self.start_marker {
-            if check(m, MarkerKind::Start) {
-                return Some(MarkerKind::Start);
-            }
+        if let Some(ref m) = self.start_marker
+            && check(m, MarkerKind::Start)
+        {
+            return Some(MarkerKind::Start);
         }
-        if let Some(ref m) = self.end_marker {
-            if check(m, MarkerKind::End) {
-                return Some(MarkerKind::End);
-            }
+        if let Some(ref m) = self.end_marker
+            && check(m, MarkerKind::End)
+        {
+            return Some(MarkerKind::End);
         }
         None
     }

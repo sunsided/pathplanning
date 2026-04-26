@@ -1,5 +1,5 @@
 use crate::graph::RoadGraph;
-use rstar::{PointDistance, RTree, RTreeObject, AABB};
+use rstar::{AABB, PointDistance, RTree, RTreeObject};
 
 #[derive(Clone)]
 struct NodePoint {

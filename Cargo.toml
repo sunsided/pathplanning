@@ -1,7 +1,13 @@
 [package]
 name = "pathplanning"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+authors = ["Markus Mayer <widemeadows@gmail.com>"]
+description = "Path planning algorithms and visualization"
+repository = "https://github.com/sunsided/pathplanning"
+license = "EUPL-1.2"
+publish = false
+keywords = ["pathfinding", "planning", "algorithms", "routing"]
 
 [[bin]]
 name = "pathplanning"
@@ -12,7 +18,7 @@ winit = "0.30"
 vello = "0.8"
 pollster = "0.4"
 fast-osmpbf = { git = "https://github.com/sunsided/fast-osmpbf", branch = "feature/memmap", features = ["mmap", "io-hints"] }
-ordered-float = "4"
+ordered-float = "5"
 rstar = "0.12"
 space-partitioning = "0.5.0"
 log = "0.4"

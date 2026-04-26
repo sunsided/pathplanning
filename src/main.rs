@@ -255,7 +255,7 @@ impl ApplicationHandler for App {
             event_loop
                 .create_window(
                     Window::default_attributes()
-                        .with_title("Path Planning – OSM A*")
+                        .with_title("Path Planning - OSM*")
                         .with_inner_size(winit::dpi::LogicalSize::new(1280u32, 720u32)),
                 )
                 .expect("Failed to create window"),
@@ -485,10 +485,10 @@ impl ApplicationHandler for App {
             self.planner.status,
             PlannerStatus::Searching | PlannerStatus::FirstMatchFound
         );
-        if self.needs_redraw || planner_animating {
-            if let Some(window) = self.window.as_ref() {
-                window.request_redraw();
-            }
+        if (self.needs_redraw || planner_animating)
+            && let Some(window) = self.window.as_ref()
+        {
+            window.request_redraw();
         }
     }
 }
@@ -614,11 +614,11 @@ fn try_start_search(input_state: &mut InputState, planner: &mut PlannerState) ->
         .and_then(|m| m.snapped_node);
     let end_node = input_state.end_marker.as_ref().and_then(|m| m.snapped_node);
 
-    if let (Some(s), Some(e)) = (start_node, end_node) {
-        if s != e {
-            planner.start_search(s, e);
-            return true;
-        }
+    if let (Some(s), Some(e)) = (start_node, end_node)
+        && s != e
+    {
+        planner.start_search(s, e);
+        return true;
     }
     false
 }
@@ -771,11 +771,11 @@ fn handle_keyboard_input(
                 .as_ref()
                 .and_then(|m| m.snapped_node);
             let end_node = input_state.end_marker.as_ref().and_then(|m| m.snapped_node);
-            if let (Some(s), Some(e)) = (start_node, end_node) {
-                if s != e {
-                    planner.start_search(s, e);
-                    return true;
-                }
+            if let (Some(s), Some(e)) = (start_node, end_node)
+                && s != e
+            {
+                planner.start_search(s, e);
+                return true;
             }
             return false;
         }
