@@ -30,6 +30,7 @@ pub enum MenuItemKind {
     Algorithm(Algorithm),
     Heuristic(Heuristic),
     Random,
+    Swap,
 }
 
 #[derive(Debug, Clone)]
@@ -822,8 +823,8 @@ pub fn draw_hud(
     max_chars = max_chars.max("HEURISTIC".len() + 2);
 
     let panel_w = max_chars as f32 * char_w + padding * 2f32;
-    // 2 header rows + 2 separator rows + 1 spacer row + algorithm rows + heuristic rows + 1 separator + 1 random row
-    let num_rows = 2 + 2 + 1 + algorithms.len() + heuristics.len() + 1 + 1;
+    // 2 header rows + 2 separator rows + 1 spacer row + algorithm rows + heuristic rows + 1 separator + 2 action rows
+    let num_rows = 2 + 2 + 1 + algorithms.len() + heuristics.len() + 1 + 2;
     let panel_h = num_rows as f32 * row_h + padding * 2f32;
 
     let panel_x = width as f32 - panel_w - margin;
@@ -1045,6 +1046,31 @@ pub fn draw_hud(
     layout
         .items
         .push(([item_x, item_y, item_w, row_h], MenuItemKind::Random));
+    row += 1;
+
+    // Swap button
+    let item_y = panel_y + padding + row as f32 * row_h;
+    let is_hovered = matches!(hover_item, Some(MenuItemKind::Swap));
+
+    if is_hovered {
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            hover_color,
+            None,
+            &vello::kurbo::Rect::new(
+                item_x as f64,
+                item_y as f64,
+                (item_x + item_w) as f64,
+                (item_y + row_h) as f64,
+            ),
+        );
+    }
+
+    draw_row_text(scene, "Swap", item_x, item_y, text_color);
+    layout
+        .items
+        .push(([item_x, item_y, item_w, row_h], MenuItemKind::Swap));
 
     layout
 }
