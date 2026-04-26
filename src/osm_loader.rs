@@ -5,6 +5,7 @@ use crate::projection::latlon_to_world;
 use osmpbf::{Element, ElementReader};
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::time::Instant;
 
 /// Routable highway tags (car/vehicle profile).
 const ROUTABLE_HIGHWAYS: &[&str] = &[
@@ -133,8 +134,10 @@ fn way_passes_filter<'a>(tags: impl Iterator<Item = (&'a str, &'a str)>) -> bool
 
 pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
     log::info!("Loading OSM PBF from: {}", path);
+    let total_start = Instant::now();
 
     // Pass 1: collect matching ways + all referenced node IDs
+    let t0 = Instant::now();
     let reader = ElementReader::from_path(path)?;
     let (ways, all_node_refs) = reader.par_map_reduce(
         |element| {
@@ -167,12 +170,17 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
         },
     )?;
 
-    log::info!("Loaded {} ways", ways.len());
+    log::info!(
+        "Pass 1: collected {} ways in {:.2?}",
+        ways.len(),
+        t0.elapsed()
+    );
 
     // Dedupe node refs into a HashSet
     let referenced_nodes: HashSet<i64> = all_node_refs.into_iter().collect();
 
     // Pass 2: collect coords for referenced node IDs
+    let t0 = Instant::now();
     let reader = ElementReader::from_path(path)?;
     let nodes_flat = reader.par_map_reduce(
         |element| {
@@ -194,7 +202,11 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
         },
     )?;
 
-    log::info!("Loaded {} referenced nodes", nodes_flat.len());
+    log::info!(
+        "Pass 2: collected {} nodes in {:.2?}",
+        nodes_flat.len(),
+        t0.elapsed()
+    );
 
     // Build coord map
     let coord_map: HashMap<i64, (f64, f64)> = nodes_flat
@@ -203,6 +215,7 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
         .collect();
 
     // Graph construction
+    let t0 = Instant::now();
     let mut osm_node_to_graph: HashMap<i64, usize> = HashMap::new();
     let mut graph = RoadGraph::new();
 
@@ -360,11 +373,14 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
     );
 
     log::info!(
-        "Graph built: {} nodes, {} edges, {} decoration shapes",
+        "Graph built: {} nodes, {} edges, {} decoration shapes in {:.2?}",
         graph.node_count(),
         graph.edge_count(),
-        graph.decorations.shapes.len()
+        graph.decorations.shapes.len(),
+        t0.elapsed()
     );
+
+    log::info!("Total load time: {:.2?}", total_start.elapsed());
 
     Ok(graph)
 }
