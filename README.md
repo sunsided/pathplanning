@@ -4,7 +4,7 @@ Path planning playground on [Berlin OSM (2026-04-25)](https://download.geofabrik
 
 | A* | A* (reverse) |
 |---|---|
-| ![A* North to South](readme/astar-one.png) | ![A* South to North](readme/astar-two.png) |
+|![A* pathfinding from north to south on Berlin OSM map with blue route highlighted and green start marker](readme/astar-one.png)|![A* pathfinding from south to north on Berlin OSM map with blue route highlighted and pink end marker](readme/astar-two.png)|
 
 ## Cost Base
 

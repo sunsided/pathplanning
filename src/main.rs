@@ -54,6 +54,7 @@ struct App {
     debug_overlay: DebugOverlayState,
     render_scratch: RenderScratch,
     needs_redraw: bool,
+    manual_lod_tier: Option<u8>,
 
     // Vello / wgpu.
     render_context: RenderContext,
@@ -99,6 +100,7 @@ impl App {
             debug_overlay,
             render_scratch,
             needs_redraw: true,
+            manual_lod_tier: None,
             render_context,
             render_state: None,
             window: None,
@@ -165,6 +167,7 @@ impl App {
             &self.input_state,
             &self.view_index,
             &self.lod_pyramid,
+            self.manual_lod_tier,
             &mut render_state.scene,
             &mut self.debug_overlay,
             &mut self.render_scratch,
@@ -465,6 +468,7 @@ impl ApplicationHandler for App {
                     &mut self.input_state,
                     &self.graph,
                     &self.camera,
+                    &mut self.manual_lod_tier,
                 );
                 if handled {
                     self.needs_redraw = true;
@@ -772,6 +776,7 @@ fn handle_keyboard_input(
     input_state: &mut InputState,
     graph: &graph::RoadGraph,
     camera: &Camera,
+    manual_lod_tier: &mut Option<u8>,
 ) -> bool {
     let mut changed = false;
 
@@ -821,16 +826,30 @@ fn handle_keyboard_input(
             planner.config.cost_mode = modes[new_idx];
             changed = true;
         }
+        Key::Character(c) if c.as_str() == "a" || c.as_str() == "A" => {
+            let algs = Algorithm::all();
+            let idx = algs
+                .iter()
+                .position(|&a| a == planner.config.algorithm)
+                .unwrap_or(0);
+            let new_idx = (idx + 1) % algs.len();
+            planner.config.algorithm = algs[new_idx];
+            changed = true;
+        }
         Key::Character(c) if c.as_str() == "1" => {
-            planner.config.algorithm = Algorithm::AStar;
+            *manual_lod_tier = Some(0);
             changed = true;
         }
         Key::Character(c) if c.as_str() == "2" => {
-            planner.config.algorithm = Algorithm::Dijkstra;
+            *manual_lod_tier = Some(1);
             changed = true;
         }
         Key::Character(c) if c.as_str() == "3" => {
-            planner.config.algorithm = Algorithm::GreedyBestFirst;
+            *manual_lod_tier = Some(2);
+            changed = true;
+        }
+        Key::Character(c) if c.as_str() == "0" => {
+            *manual_lod_tier = None;
             changed = true;
         }
         Key::Character(c) if c.as_str() == "r" => {

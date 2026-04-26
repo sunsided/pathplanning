@@ -255,6 +255,7 @@ pub fn render(
     input_state: &InputState,
     view_index: &impl ViewportIndex,
     pyramid: &LodPyramid,
+    manual_lod_tier: Option<u8>,
     scene: &mut Scene,
     debug_overlay: &mut DebugOverlayState,
     scratch: &mut RenderScratch,
@@ -263,7 +264,7 @@ pub fn render(
 ) {
     let (vmin_x, vmin_y, vmax_x, vmax_y) = camera.visible_world_aabb(32.0);
 
-    let lod = pyramid.pick(camera.zoom);
+    let lod = pyramid.pick(camera.zoom, manual_lod_tier);
 
     // Layer 0: decoration fills (buildings, landuse, plazas) — behind everything.
     draw_decorations_lod(lod, camera, vmin_x, vmin_y, vmax_x, vmax_y, scene, scratch);
@@ -326,7 +327,15 @@ pub fn render(
     draw_markers(camera, input_state, scene);
 
     // Layer 7: debug overlay.
-    draw_debug(graph, camera, planner, pyramid, scene, debug_overlay);
+    draw_debug(
+        graph,
+        camera,
+        planner,
+        pyramid,
+        manual_lod_tier,
+        scene,
+        debug_overlay,
+    );
 
     // Layer 8: HUD menu.
     debug_overlay.menu_layout = draw_hud(
@@ -740,6 +749,7 @@ fn draw_debug(
     camera: &Camera,
     planner: &PlannerState,
     pyramid: &LodPyramid,
+    manual_lod_tier: Option<u8>,
     scene: &mut Scene,
     state: &mut DebugOverlayState,
 ) {
@@ -753,7 +763,7 @@ fn draw_debug(
         PlannerStatus::Done => "DONE",
     };
 
-    let lod = pyramid.pick(camera.zoom);
+    let lod = pyramid.pick(camera.zoom, manual_lod_tier);
     let lod_label = if std::ptr::eq(lod, &pyramid.l0) {
         "L0"
     } else if std::ptr::eq(lod, &pyramid.l1) {

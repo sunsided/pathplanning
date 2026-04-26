@@ -230,8 +230,15 @@ impl LodPyramid {
         Self { l0, l1, l2 }
     }
 
-    pub fn pick(&self, zoom: f64) -> &LodLevel {
-        if zoom >= L1_ZOOM_THRESHOLD {
+    pub fn pick(&self, zoom: f64, manual_tier: Option<u8>) -> &LodLevel {
+        if let Some(tier) = manual_tier {
+            match tier {
+                0 => &self.l0,
+                1 => &self.l1,
+                2 => &self.l2,
+                _ => self.pick(zoom, None),
+            }
+        } else if zoom >= L1_ZOOM_THRESHOLD {
             &self.l0
         } else if zoom >= L2_ZOOM_THRESHOLD {
             &self.l1
