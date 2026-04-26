@@ -2,7 +2,8 @@ use crate::graph::{
     DecorationKind, DecorationLayer, DecorationShape, GraphEdge, GraphNode, RoadClass, RoadGraph,
 };
 use crate::projection::latlon_to_world;
-use osmpbf::{Element, ElementReader};
+use fast_osmpbf::prelude::*;
+use fast_osmpbf::{ElementBlock, ElementFilter, OsmReader};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::time::Instant;
@@ -138,37 +139,43 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
 
     // Pass 1: collect matching ways + all referenced node IDs
     let t0 = Instant::now();
-    let reader = ElementReader::from_path(path)?;
-    let (ways, all_node_refs) = reader.par_map_reduce(
-        |element| {
-            if let Element::Way(way) = element {
-                let borrowed_tags: Vec<(&str, &str)> = way.tags().collect();
-                if !way_passes_filter(borrowed_tags.iter().map(|&(k, v)| (k, v))) {
-                    return (Vec::new(), Vec::new());
+    let reader = OsmReader::from_path(path)?;
+    reader.apply_element_filter(ElementFilter {
+        nodes: false,
+        relations: false,
+        ways: true,
+    });
+
+    let (ways, all_node_refs): (Vec<WayRecord>, Vec<i64>) = reader
+        .par_blocks()
+        .map(|block| {
+            let mut ways = Vec::new();
+            let mut refs = Vec::new();
+            if let ElementBlock::WayBlock(block) = block {
+                for way in block.iter() {
+                    let borrowed_tags: Vec<(&str, &str)> = way.tags().collect();
+                    if !way_passes_filter(borrowed_tags.iter().copied()) {
+                        continue;
+                    }
+                    let node_refs: Vec<i64> = way.node_ids().collect();
+                    let tags: Vec<(String, String)> = borrowed_tags
+                        .into_iter()
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect();
+                    refs.extend_from_slice(&node_refs);
+                    ways.push(WayRecord { tags, node_refs });
                 }
-                let node_refs: Vec<i64> = way.refs().collect();
-                let tags: Vec<(String, String)> = borrowed_tags
-                    .into_iter()
-                    .map(|(k, v)| (k.to_string(), v.to_string()))
-                    .collect();
-                (
-                    vec![WayRecord {
-                        tags,
-                        node_refs: node_refs.clone(),
-                    }],
-                    node_refs,
-                )
-            } else {
-                (Vec::new(), Vec::new())
             }
-        },
-        || (Vec::new(), Vec::new()),
-        |mut a, b| {
-            a.0.extend(b.0);
-            a.1.extend(b.1);
-            a
-        },
-    )?;
+            (ways, refs)
+        })
+        .reduce(
+            || (Vec::new(), Vec::new()),
+            |mut a, b| {
+                a.0.extend(b.0);
+                a.1.extend(b.1);
+                a
+            },
+        );
 
     log::info!(
         "Pass 1: collected {} ways in {:.2?}",
@@ -181,26 +188,43 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
 
     // Pass 2: collect coords for referenced node IDs
     let t0 = Instant::now();
-    let reader = ElementReader::from_path(path)?;
-    let nodes_flat = reader.par_map_reduce(
-        |element| {
-            let (id, lat, lon) = match &element {
-                Element::Node(n) => (n.id(), n.lat(), n.lon()),
-                Element::DenseNode(n) => (n.id(), n.lat(), n.lon()),
-                _ => return Vec::new(),
-            };
-            if referenced_nodes.contains(&id) {
-                vec![(id, lat, lon)]
-            } else {
-                Vec::new()
+    let reader = OsmReader::from_path(path)?;
+    reader.apply_element_filter(ElementFilter {
+        nodes: true,
+        relations: false,
+        ways: false,
+    });
+    reader.apply_tag_filter(&[]).ok();
+
+    let nodes_flat: Vec<(i64, f64, f64)> = reader
+        .par_blocks()
+        .map(|block| {
+            let mut out = Vec::new();
+            match block {
+                ElementBlock::DenseNodeBlock(b) => {
+                    for mut n in b.iter() {
+                        let id = n.id();
+                        if referenced_nodes.contains(&id) {
+                            out.push((id, n.lat(), n.lon()));
+                        }
+                    }
+                }
+                ElementBlock::NodeBlock(b) => {
+                    for mut n in b.iter() {
+                        let id = n.id();
+                        if referenced_nodes.contains(&id) {
+                            out.push((id, n.lat(), n.lon()));
+                        }
+                    }
+                }
+                _ => {}
             }
-        },
-        Vec::new,
-        |mut a, b| {
+            out
+        })
+        .reduce(Vec::new, |mut a, b| {
             a.extend(b);
             a
-        },
-    )?;
+        });
 
     log::info!(
         "Pass 2: collected {} nodes in {:.2?}",
