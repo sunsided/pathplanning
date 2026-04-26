@@ -41,7 +41,6 @@ pub fn step_dijkstra(state: &mut PlannerState, graph: &RoadGraph, n_steps: usize
             state.best_path = Some(path.clone());
             state.locked_path = Some(path.clone());
             state.fill_path_metrics(graph, &path);
-            state.locked_path_dist_m = *state.g_score.get(&goal).unwrap_or(&0.0);
             if state.status == PlannerStatus::Searching {
                 state.status = PlannerStatus::FirstMatchFound;
             }
