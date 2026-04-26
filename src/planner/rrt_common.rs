@@ -56,9 +56,16 @@ pub(crate) fn sample_goal(
     if rng.random::<f64>() < goal_bias {
         graph.nodes[goal].world_pos
     } else {
-        [
-            rng.random_range(bbox_min[0]..bbox_max[0]),
-            rng.random_range(bbox_min[1]..bbox_max[1]),
-        ]
+        let x_range = if bbox_min[0] < bbox_max[0] {
+            bbox_min[0]..bbox_max[0]
+        } else {
+            (bbox_min[0] - 1.0)..(bbox_max[0] + 1.0)
+        };
+        let y_range = if bbox_min[1] < bbox_max[1] {
+            bbox_min[1]..bbox_max[1]
+        } else {
+            (bbox_min[1] - 1.0)..(bbox_max[1] + 1.0)
+        };
+        [rng.random_range(x_range), rng.random_range(y_range)]
     }
 }

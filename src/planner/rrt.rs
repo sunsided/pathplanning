@@ -145,6 +145,7 @@ pub fn step_rrt(state: &mut PlannerState, graph: &RoadGraph, n_steps: usize) -> 
     if state.rrt.is_none() {
         state.open_set.clear();
         let start = state.frontier.iter().next().copied().unwrap_or(0);
+        state.explored.insert(start);
         state.rrt = Some(RrtState::new(start, goal, graph));
     }
 
@@ -202,22 +203,8 @@ pub fn step_rrt(state: &mut PlannerState, graph: &RoadGraph, n_steps: usize) -> 
             &mut rrt.rtree,
         );
 
-        rrt.stall_counter += 1;
-
         if let Some(new_node) = q_new {
             rrt.stall_counter = 0;
-
-            if rrt.stall_counter >= STALL_THRESHOLD {
-                let dx = rrt.bbox_max[0] - rrt.bbox_min[0];
-                let dy = rrt.bbox_max[1] - rrt.bbox_min[1];
-                let expand_x = dx * (BBOX_EXPAND_FACTOR - 1.0) / 2.0;
-                let expand_y = dy * (BBOX_EXPAND_FACTOR - 1.0) / 2.0;
-                rrt.bbox_min[0] = (rrt.bbox_min[0] - expand_x).max(rrt.graph_bbox_min[0]);
-                rrt.bbox_min[1] = (rrt.bbox_min[1] - expand_y).max(rrt.graph_bbox_min[1]);
-                rrt.bbox_max[0] = (rrt.bbox_max[0] + expand_x).min(rrt.graph_bbox_max[0]);
-                rrt.bbox_max[1] = (rrt.bbox_max[1] + expand_y).min(rrt.graph_bbox_max[1]);
-                rrt.stall_counter = 0;
-            }
 
             if new_node == goal {
                 let path = state.reconstruct_path(goal);
@@ -228,6 +215,19 @@ pub fn step_rrt(state: &mut PlannerState, graph: &RoadGraph, n_steps: usize) -> 
                     state.status = PlannerStatus::FirstMatchFound;
                 }
                 return false;
+            }
+        } else {
+            rrt.stall_counter += 1;
+            if rrt.stall_counter >= STALL_THRESHOLD {
+                let dx = rrt.bbox_max[0] - rrt.bbox_min[0];
+                let dy = rrt.bbox_max[1] - rrt.bbox_min[1];
+                let expand_x = dx * (BBOX_EXPAND_FACTOR - 1.0) / 2.0;
+                let expand_y = dy * (BBOX_EXPAND_FACTOR - 1.0) / 2.0;
+                rrt.bbox_min[0] = (rrt.bbox_min[0] - expand_x).max(rrt.graph_bbox_min[0]);
+                rrt.bbox_min[1] = (rrt.bbox_min[1] - expand_y).max(rrt.graph_bbox_min[1]);
+                rrt.bbox_max[0] = (rrt.bbox_max[0] + expand_x).min(rrt.graph_bbox_max[0]);
+                rrt.bbox_max[1] = (rrt.bbox_max[1] + expand_y).min(rrt.graph_bbox_max[1]);
+                rrt.stall_counter = 0;
             }
         }
     }
@@ -250,11 +250,12 @@ fn extend(
     rtree: &mut RTree<TreePoint>,
 ) -> Option<usize> {
     if q_near >= graph.adjacency.len() {
-        mark_exhausted(q_near, exhausted, rtree);
+        mark_exhausted(q_near, graph.nodes[q_near].world_pos, exhausted, rtree);
         return None;
     }
 
     let mut best_neighbor: Option<usize> = None;
+    let mut best_edge_idx: Option<usize> = None;
     let mut best_dist_sq = f64::INFINITY;
 
     for &edge_idx in &graph.adjacency[q_near] {
@@ -273,17 +274,14 @@ fn extend(
         if dist_sq < best_dist_sq {
             best_dist_sq = dist_sq;
             best_neighbor = Some(neighbor);
+            best_edge_idx = Some(edge_idx);
         }
     }
 
     match best_neighbor {
         Some(q_new) => {
             let g_near = *g_score.get(&q_near).unwrap_or(&0.0);
-            let edge = graph.adjacency[q_near]
-                .iter()
-                .map(|&ei| &graph.edges[ei])
-                .find(|e| e.to == q_new)
-                .unwrap();
+            let edge = &graph.edges[best_edge_idx.unwrap()];
             let new_g = g_near + PlannerState::edge_cost(graph, edge, cost_mode);
 
             came_from.insert(q_new, q_near);
@@ -302,21 +300,26 @@ fn extend(
                 let n = graph.edges[ei].to;
                 explored.contains(&n)
             }) {
-                mark_exhausted(q_near, exhausted, rtree);
+                mark_exhausted(q_near, graph.nodes[q_near].world_pos, exhausted, rtree);
             }
 
             Some(q_new)
         }
         None => {
-            mark_exhausted(q_near, exhausted, rtree);
+            mark_exhausted(q_near, graph.nodes[q_near].world_pos, exhausted, rtree);
             None
         }
     }
 }
 
-fn mark_exhausted(node_id: usize, exhausted: &mut HashSet<usize>, rtree: &mut RTree<TreePoint>) {
+fn mark_exhausted(
+    node_id: usize,
+    pos: [f64; 2],
+    exhausted: &mut HashSet<usize>,
+    rtree: &mut RTree<TreePoint>,
+) {
     if exhausted.insert(node_id)
-        && let Some(tp) = rtree.remove_at_point(&[node_id as f64, node_id as f64])
+        && let Some(tp) = rtree.remove_at_point(&pos)
     {
         let _ = tp;
     }

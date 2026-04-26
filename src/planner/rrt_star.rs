@@ -205,13 +205,13 @@ fn extend_toward(
                 explored.contains(&n)
             }) && exhausted.insert(q_near)
             {
-                let _ = rtree.remove_at_point(&[q_near as f64, q_near as f64]);
+                let _ = rtree.remove_at_point(&graph.nodes[q_near].world_pos);
             }
             Some(q_new)
         }
         None => {
             if exhausted.insert(q_near) {
-                let _ = rtree.remove_at_point(&[q_near as f64, q_near as f64]);
+                let _ = rtree.remove_at_point(&graph.nodes[q_near].world_pos);
             }
             None
         }
