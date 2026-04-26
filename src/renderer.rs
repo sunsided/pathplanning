@@ -4,6 +4,14 @@ use crate::graph::{DecorationKind, DecorationLayer, RoadClass, RoadGraph};
 use crate::input::InputState;
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
+#[derive(Clone, Copy)]
+struct ColorRGBA {
+    r: u8,
+    g: u8,
+    b: u8,
+    a: u8,
+}
+
 // ---------------------------------------------------------------------------
 // Minimal 8×8 bitmap font (row-major, MSB = leftmost pixel).
 // Only covers the characters needed for the debug overlay.
@@ -108,10 +116,10 @@ fn circle_path(cx: f32, cy: f32, radius: f32) -> Option<tiny_skia::Path> {
     pb.finish()
 }
 
-fn fill_circle(pixmap: &mut Pixmap, cx: f32, cy: f32, radius: f32, r: u8, g: u8, b: u8, a: u8) {
+fn fill_circle(pixmap: &mut Pixmap, cx: f32, cy: f32, radius: f32, color: ColorRGBA) {
     if let Some(path) = circle_path(cx, cy, radius) {
         let mut paint = Paint::default();
-        paint.set_color_rgba8(r, g, b, a);
+        paint.set_color_rgba8(color.r, color.g, color.b, color.a);
         pixmap.fill_path(
             &path,
             &paint,
@@ -122,15 +130,7 @@ fn fill_circle(pixmap: &mut Pixmap, cx: f32, cy: f32, radius: f32, r: u8, g: u8,
     }
 }
 
-fn fill_polygon(
-    pixmap: &mut Pixmap,
-    points: &[[f64; 2]],
-    camera: &Camera,
-    r: u8,
-    g: u8,
-    b: u8,
-    a: u8,
-) {
+fn fill_polygon(pixmap: &mut Pixmap, points: &[[f64; 2]], camera: &Camera, color: ColorRGBA) {
     if points.len() < 2 {
         return;
     }
@@ -144,8 +144,14 @@ fn fill_polygon(
     pb.close();
     if let Some(path) = pb.finish() {
         let mut paint = Paint::default();
-        paint.set_color_rgba8(r, g, b, a);
-        pixmap.fill_path(&path, &paint, FillRule::EvenOdd, Transform::identity(), None);
+        paint.set_color_rgba8(color.r, color.g, color.b, color.a);
+        pixmap.fill_path(
+            &path,
+            &paint,
+            FillRule::EvenOdd,
+            Transform::identity(),
+            None,
+        );
     }
 }
 
@@ -153,10 +159,7 @@ fn stroke_polyline(
     pixmap: &mut Pixmap,
     points: &[[f64; 2]],
     camera: &Camera,
-    r: u8,
-    g: u8,
-    b: u8,
-    a: u8,
+    color: ColorRGBA,
     width: f32,
 ) {
     if points.len() < 2 {
@@ -171,7 +174,7 @@ fn stroke_polyline(
     }
     if let Some(path) = pb.finish() {
         let mut paint = Paint::default();
-        paint.set_color_rgba8(r, g, b, a);
+        paint.set_color_rgba8(color.r, color.g, color.b, color.a);
         let stroke = Stroke {
             width,
             ..Default::default()
@@ -208,12 +211,36 @@ pub fn render(
 
     // Layer 4: current best path (neon cyan).
     if let Some(ref path) = planner.best_path {
-        draw_node_path(graph, camera, path, pixmap, 0, 255, 255, 220, 2.5);
+        draw_node_path(
+            graph,
+            camera,
+            path,
+            pixmap,
+            ColorRGBA {
+                r: 0,
+                g: 255,
+                b: 255,
+                a: 220,
+            },
+            2.5,
+        );
     }
 
     // Layer 5: locked path (electric blue).
     if let Some(ref path) = planner.locked_path {
-        draw_node_path(graph, camera, path, pixmap, 0, 128, 255, 255, 3.0);
+        draw_node_path(
+            graph,
+            camera,
+            path,
+            pixmap,
+            ColorRGBA {
+                r: 0,
+                g: 128,
+                b: 255,
+                a: 255,
+            },
+            3.0,
+        );
     }
 
     // Layer 6: markers.
@@ -241,13 +268,35 @@ fn draw_decorations(layer: &DecorationLayer, camera: &Camera, pixmap: &mut Pixma
         };
 
         if shape.closed {
-            fill_polygon(pixmap, &shape.polyline_world, camera, r, g, b, a);
+            fill_polygon(
+                pixmap,
+                &shape.polyline_world,
+                camera,
+                ColorRGBA { r, g, b, a },
+            );
             // Outline for buildings.
             if shape.kind == DecorationKind::Building {
-                stroke_polyline(pixmap, &shape.polyline_world, camera, 36, 42, 58, 200, 0.8);
+                stroke_polyline(
+                    pixmap,
+                    &shape.polyline_world,
+                    camera,
+                    ColorRGBA {
+                        r: 36,
+                        g: 42,
+                        b: 58,
+                        a: 200,
+                    },
+                    0.8,
+                );
             }
         } else {
-            stroke_polyline(pixmap, &shape.polyline_world, camera, r, g, b, a, 0.8);
+            stroke_polyline(
+                pixmap,
+                &shape.polyline_world,
+                camera,
+                ColorRGBA { r, g, b, a },
+                0.8,
+            );
         }
     }
 }
@@ -260,7 +309,18 @@ fn draw_all_edges(graph: &RoadGraph, camera: &Camera, pixmap: &mut Pixmap) {
             RoadClass::Primary => (30, 55, 90),
             _ => (26, 58, 92),
         };
-        stroke_polyline(pixmap, &edge.polyline_world, camera, er, eg, eb, 200, width);
+        stroke_polyline(
+            pixmap,
+            &edge.polyline_world,
+            camera,
+            ColorRGBA {
+                r: er,
+                g: eg,
+                b: eb,
+                a: 200,
+            },
+            width,
+        );
     }
 }
 
@@ -279,10 +339,12 @@ fn draw_explored_edges(
                 pixmap,
                 &edge.polyline_world,
                 camera,
-                30,
-                77,
-                122, // #1e4d7a
-                180,
+                ColorRGBA {
+                    r: 30,
+                    g: 77,
+                    b: 122,
+                    a: 180,
+                },
                 1.2,
             );
         }
@@ -295,7 +357,18 @@ fn draw_frontier(graph: &RoadGraph, camera: &Camera, planner: &PlannerState, pix
             continue;
         }
         let sp = camera.world_to_screen(graph.nodes[node_id].world_pos);
-        fill_circle(pixmap, sp[0], sp[1], 2.5, 0, 212, 255, 200);
+        fill_circle(
+            pixmap,
+            sp[0],
+            sp[1],
+            2.5,
+            ColorRGBA {
+                r: 0,
+                g: 212,
+                b: 255,
+                a: 200,
+            },
+        );
     }
 }
 
@@ -304,10 +377,7 @@ fn draw_node_path(
     camera: &Camera,
     path: &[usize],
     pixmap: &mut Pixmap,
-    r: u8,
-    g: u8,
-    b: u8,
-    a: u8,
+    color: ColorRGBA,
     width: f32,
 ) {
     if path.len() < 2 {
@@ -330,7 +400,7 @@ fn draw_node_path(
     }
     if let Some(path_geom) = pb.finish() {
         let mut paint = Paint::default();
-        paint.set_color_rgba8(r, g, b, a);
+        paint.set_color_rgba8(color.r, color.g, color.b, color.a);
         let stroke = Stroke {
             width,
             ..Default::default()
@@ -342,13 +412,57 @@ fn draw_node_path(
 fn draw_markers(camera: &Camera, input_state: &InputState, pixmap: &mut Pixmap) {
     if let Some(ref m) = input_state.start_marker {
         let sp = camera.world_to_screen(m.world_pos);
-        fill_circle(pixmap, sp[0], sp[1], 7.0, 0, 255, 128, 230);
-        fill_circle(pixmap, sp[0], sp[1], 3.0, 255, 255, 255, 255);
+        fill_circle(
+            pixmap,
+            sp[0],
+            sp[1],
+            7.0,
+            ColorRGBA {
+                r: 0,
+                g: 255,
+                b: 128,
+                a: 230,
+            },
+        );
+        fill_circle(
+            pixmap,
+            sp[0],
+            sp[1],
+            3.0,
+            ColorRGBA {
+                r: 255,
+                g: 255,
+                b: 255,
+                a: 255,
+            },
+        );
     }
     if let Some(ref m) = input_state.end_marker {
         let sp = camera.world_to_screen(m.world_pos);
-        fill_circle(pixmap, sp[0], sp[1], 7.0, 255, 0, 170, 230);
-        fill_circle(pixmap, sp[0], sp[1], 3.0, 255, 255, 255, 255);
+        fill_circle(
+            pixmap,
+            sp[0],
+            sp[1],
+            7.0,
+            ColorRGBA {
+                r: 255,
+                g: 0,
+                b: 170,
+                a: 230,
+            },
+        );
+        fill_circle(
+            pixmap,
+            sp[0],
+            sp[1],
+            3.0,
+            ColorRGBA {
+                r: 255,
+                g: 255,
+                b: 255,
+                a: 255,
+            },
+        );
     }
 }
 
