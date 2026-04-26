@@ -103,13 +103,13 @@ fn is_rejected_service(tags: &[(String, String)]) -> bool {
 
 fn way_passes_filter<'a>(tags: impl Iterator<Item = (&'a str, &'a str)>) -> bool {
     let mut highway = None;
-    let mut has_building = false;
+    let mut building_value: Option<&str> = None;
     let mut landuse = None;
     let mut area = false;
     for (k, v) in tags {
         match k {
             "highway" => highway = Some(v),
-            "building" => has_building = true,
+            "building" => building_value = Some(v),
             "landuse" => landuse = Some(v),
             "area" if v == "yes" => area = true,
             _ => {}
@@ -124,7 +124,7 @@ fn way_passes_filter<'a>(tags: impl Iterator<Item = (&'a str, &'a str)>) -> bool
         }
         return false;
     }
-    if has_building {
+    if building_value.is_some_and(|v| !matches!(v, "no" | "false" | "0")) {
         return true;
     }
     if let Some(lu) = landuse {
@@ -294,6 +294,7 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
                     || oneway_tag == Some("1")
                     || oneway_tag == Some("true")
                     || junction_tag == Some("roundabout");
+                let is_reverse_oneway = oneway_tag == Some("-1") || oneway_tag == Some("reverse");
 
                 let node_ids: Vec<usize> = way
                     .node_refs
@@ -311,9 +312,16 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
                     .collect();
 
                 for i in 0..(node_ids.len() - 1) {
-                    let from = node_ids[i];
-                    let to = node_ids[i + 1];
-                    let polyline = vec![positions[i], positions[i + 1]];
+                    let (from, to) = if is_reverse_oneway {
+                        (node_ids[i + 1], node_ids[i])
+                    } else {
+                        (node_ids[i], node_ids[i + 1])
+                    };
+                    let polyline = if is_reverse_oneway {
+                        vec![positions[i + 1], positions[i]]
+                    } else {
+                        vec![positions[i], positions[i + 1]]
+                    };
                     let weight = euclidean_dist(positions[i], positions[i + 1]);
 
                     let fwd_idx = graph.edges.len();
@@ -323,11 +331,11 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
                         weight_meters: weight,
                         polyline_world: polyline.clone(),
                         road_class,
-                        one_way: is_one_way,
+                        one_way: true,
                     });
                     graph.adjacency[from].push(fwd_idx);
 
-                    if !is_one_way {
+                    if !is_one_way && !is_reverse_oneway {
                         let rev_idx = graph.edges.len();
                         graph.edges.push(GraphEdge {
                             from: to,

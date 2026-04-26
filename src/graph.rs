@@ -29,6 +29,7 @@ impl RoadClass {
         }
     }
 
+    #[allow(dead_code)]
     pub fn stroke_width(&self) -> f32 {
         match self {
             RoadClass::Motorway => 3.0,

@@ -107,9 +107,7 @@ pub struct DecorLod {
 pub struct LodLevel {
     pub edges: Vec<EdgeLod>,
     pub decorations: Vec<DecorLod>,
-    #[allow(dead_code)]
     pub edge_index: RStarViewIndex,
-    #[allow(dead_code)]
     pub decor_index: RStarViewIndex,
 }
 
@@ -203,7 +201,7 @@ fn build_tier(graph: &RoadGraph, tier: u8) -> LodLevel {
         edge_aabbs,
         edge_items_rstar.iter().map(|(id, _)| *id).collect(),
     );
-    let decor_index = RStarViewIndex::build_from_raw_aabbs(decor_aabbs, vec![]);
+    let decor_index = RStarViewIndex::build_decor_only(decor_aabbs);
 
     LodLevel {
         edges,
