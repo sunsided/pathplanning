@@ -449,12 +449,15 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
                         vec![positions[i], positions[i + 1]]
                     };
                     let weight = haversine_dist(latlons[i], latlons[i + 1]);
+                    let speed_mps = road_class.default_speed_kmh() * 1000.0 / 3600.0;
+                    let travel_time = weight / speed_mps;
 
                     let fwd_idx = graph.edges.len();
                     graph.edges.push(GraphEdge {
                         from,
                         to,
                         weight_meters: weight,
+                        travel_time_s: travel_time,
                         polyline_world: polyline.clone(),
                         road_class,
                         one_way: is_one_way || is_reverse_oneway,
@@ -467,6 +470,7 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
                             from: to,
                             to: from,
                             weight_meters: weight,
+                            travel_time_s: travel_time,
                             polyline_world: {
                                 let mut rev = polyline.clone();
                                 rev.reverse();
@@ -595,6 +599,17 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
         )),
         "All edges must be routable road classes"
     );
+
+    // Compute node out-degree (distinct neighbor nodes).
+    graph.node_out_degree = (0..graph.nodes.len())
+        .map(|i| {
+            let neighbors: HashSet<usize> = graph.adjacency[i]
+                .iter()
+                .map(|&e| graph.edges[e].to)
+                .collect();
+            neighbors.len().min(u8::MAX as usize) as u8
+        })
+        .collect();
 
     log::info!(
         "Graph built: {} nodes, {} edges, {} decoration shapes in {:.2?}",

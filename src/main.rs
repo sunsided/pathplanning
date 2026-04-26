@@ -4,24 +4,25 @@ use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::EventLoop;
+use winit::keyboard::Key;
 use winit::window::Window;
 
-mod astar;
 mod camera;
 mod graph;
 mod input;
 mod lod;
 mod osm_loader;
+mod planner;
 mod projection;
 mod renderer;
 mod spatial_index;
 mod view_index;
 
-use astar::{PlannerState, PlannerStatus};
 use camera::Camera;
 use input::{InputState, Marker, MarkerKind};
 use lod::LodPyramid;
-use renderer::{DebugOverlayState, RenderScratch};
+use planner::{Algorithm, CostMode, Heuristic, PlannerState, PlannerStatus};
+use renderer::{DebugOverlayState, MenuItemKind, RenderScratch};
 use spatial_index::SpatialIndex;
 use view_index::RStarViewIndex;
 
@@ -53,6 +54,7 @@ struct App {
     debug_overlay: DebugOverlayState,
     render_scratch: RenderScratch,
     needs_redraw: bool,
+    manual_lod_tier: Option<u8>,
 
     // Vello / wgpu.
     render_context: RenderContext,
@@ -98,6 +100,7 @@ impl App {
             debug_overlay,
             render_scratch,
             needs_redraw: true,
+            manual_lod_tier: None,
             render_context,
             render_state: None,
             window: None,
@@ -164,6 +167,7 @@ impl App {
             &self.input_state,
             &self.view_index,
             &self.lod_pyramid,
+            self.manual_lod_tier,
             &mut render_state.scene,
             &mut self.debug_overlay,
             &mut self.render_scratch,
@@ -291,6 +295,12 @@ impl ApplicationHandler for App {
                 let new_pos = [position.x as f32, position.y as f32];
                 self.input_state.drag_screen_pos = new_pos;
 
+                if !self.input_state.left_button_down {
+                    self.input_state.hover_menu_item =
+                        self.debug_overlay.menu_layout.hit_test(new_pos);
+                    self.needs_redraw = true;
+                }
+
                 if self.input_state.left_button_down {
                     if !self.input_state.is_drag && self.input_state.drag_distance() > 5.0 {
                         self.input_state.is_drag = true;
@@ -346,18 +356,41 @@ impl ApplicationHandler for App {
                             self.input_state.press_pos = screen_pos;
                             self.input_state.is_drag = false;
 
-                            let near = self.input_state.marker_near(screen_pos, 12.0, &self.camera);
-                            if let Some(kind) = near {
-                                self.input_state.dragging = Some(kind);
+                            let hud_hit = self.debug_overlay.menu_layout.hit_test(screen_pos);
+                            let hud_panel =
+                                self.debug_overlay.menu_layout.hit_test_panel(screen_pos);
+
+                            if hud_hit.is_some() {
+                                self.input_state.pressed_menu_item = hud_hit;
+                            } else if hud_panel {
+                                // Inside panel but not on an item — consume to prevent pan/marker
                             } else {
-                                self.input_state.pan_start = Some(screen_pos);
-                                self.input_state.pan_center_start = Some(self.camera.center);
+                                let near =
+                                    self.input_state.marker_near(screen_pos, 12.0, &self.camera);
+                                if let Some(kind) = near {
+                                    self.input_state.dragging = Some(kind);
+                                } else {
+                                    self.input_state.pan_start = Some(screen_pos);
+                                    self.input_state.pan_center_start = Some(self.camera.center);
+                                }
                             }
                         }
                         ElementState::Released => {
                             self.input_state.left_button_down = false;
 
-                            if self.input_state.dragging.is_some() {
+                            if let Some(pressed) = self.input_state.pressed_menu_item.take() {
+                                let released = self.debug_overlay.menu_layout.hit_test(screen_pos);
+                                if released == Some(pressed) {
+                                    apply_menu_choice(
+                                        pressed,
+                                        &mut self.planner,
+                                        &mut self.input_state,
+                                        &self.graph,
+                                        &self.camera,
+                                    );
+                                }
+                                self.needs_redraw = true;
+                            } else if self.input_state.dragging.is_some() {
                                 if snap_and_trigger(
                                     &mut self.input_state,
                                     &mut self.planner,
@@ -422,6 +455,25 @@ impl ApplicationHandler for App {
                 self.camera
                     .zoom_around(self.input_state.drag_screen_pos, factor);
                 self.needs_redraw = true;
+            }
+
+            WindowEvent::KeyboardInput {
+                event,
+                is_synthetic: false,
+                ..
+            } if event.state == ElementState::Pressed => {
+                let handled = handle_keyboard_input(
+                    &event.logical_key,
+                    &mut self.planner,
+                    &mut self.input_state,
+                    &self.graph,
+                    &self.camera,
+                    &mut self.manual_lod_tier,
+                    &mut self.debug_overlay,
+                );
+                if handled {
+                    self.needs_redraw = true;
+                }
             }
 
             _ => {}
@@ -575,4 +627,265 @@ fn dist2(a: [f32; 2], b: [f32; 2]) -> f32 {
     let dx = a[0] - b[0];
     let dy = a[1] - b[1];
     dx * dx + dy * dy
+}
+
+fn apply_menu_choice(
+    item: MenuItemKind,
+    planner: &mut PlannerState,
+    input_state: &mut InputState,
+    graph: &graph::RoadGraph,
+    camera: &Camera,
+) {
+    let changed = match item {
+        MenuItemKind::Algorithm(a) => {
+            if planner.config.algorithm != a {
+                planner.config.algorithm = a;
+                true
+            } else {
+                false
+            }
+        }
+        MenuItemKind::Heuristic(h) => {
+            if planner.config.heuristic != h {
+                planner.config.heuristic = h;
+                true
+            } else {
+                false
+            }
+        }
+        MenuItemKind::CostMode(m) => {
+            if planner.config.cost_mode != m {
+                planner.config.cost_mode = m;
+                true
+            } else {
+                false
+            }
+        }
+        MenuItemKind::Swap => swap_markers(input_state, graph),
+        MenuItemKind::Random => randomize_route(input_state, graph, camera),
+    };
+
+    if !changed {
+        return;
+    }
+
+    let start_node = input_state
+        .start_marker
+        .as_ref()
+        .and_then(|m| m.snapped_node);
+    let end_node = input_state.end_marker.as_ref().and_then(|m| m.snapped_node);
+
+    if let (Some(s), Some(e)) = (start_node, end_node) {
+        if s != e {
+            planner.start_search(s, e);
+        }
+    } else {
+        planner.reset();
+    }
+}
+
+fn swap_markers(input_state: &mut InputState, _graph: &graph::RoadGraph) -> bool {
+    if input_state.start_marker.is_some() && input_state.end_marker.is_some() {
+        std::mem::swap(&mut input_state.start_marker, &mut input_state.end_marker);
+        return true;
+    }
+    false
+}
+
+fn randomize_route(
+    input_state: &mut InputState,
+    graph: &graph::RoadGraph,
+    camera: &Camera,
+) -> bool {
+    let (vmin_x, vmin_y, vmax_x, vmax_y) = camera.visible_world_aabb(0.0);
+
+    let routable: Vec<usize> = graph
+        .adjacency
+        .iter()
+        .enumerate()
+        .filter(|(id, edges)| {
+            if edges.is_empty() {
+                return false;
+            }
+            let pos = graph.nodes[*id].world_pos;
+            pos[0] >= vmin_x && pos[0] <= vmax_x && pos[1] >= vmin_y && pos[1] <= vmax_y
+        })
+        .map(|(id, _)| id)
+        .collect();
+
+    if routable.len() < 2 {
+        return false;
+    }
+
+    let mut seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    let mut rng = |max: usize| -> usize {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed as usize) % max
+    };
+
+    let start_idx = rng(routable.len());
+    let mut end_idx = rng(routable.len());
+    while end_idx == start_idx {
+        end_idx = rng(routable.len());
+    }
+
+    let start_node = routable[start_idx];
+    let end_node = routable[end_idx];
+
+    input_state.start_marker = Some(Marker {
+        world_pos: graph.nodes[start_node].world_pos,
+        snapped_node: Some(start_node),
+    });
+    input_state.end_marker = Some(Marker {
+        world_pos: graph.nodes[end_node].world_pos,
+        snapped_node: Some(end_node),
+    });
+
+    true
+}
+
+fn handle_keyboard_input(
+    key: &Key,
+    planner: &mut PlannerState,
+    input_state: &mut InputState,
+    graph: &graph::RoadGraph,
+    camera: &Camera,
+    manual_lod_tier: &mut Option<u8>,
+    debug_overlay: &mut DebugOverlayState,
+) -> bool {
+    let mut changed = false;
+
+    match key {
+        Key::Named(winit::keyboard::NamedKey::F1) => {
+            debug_overlay.hud_visible = !debug_overlay.hud_visible;
+            return true;
+        }
+        Key::Named(winit::keyboard::NamedKey::Backspace) => {
+            let start_node = input_state
+                .start_marker
+                .as_ref()
+                .and_then(|m| m.snapped_node);
+            let end_node = input_state.end_marker.as_ref().and_then(|m| m.snapped_node);
+            if let (Some(s), Some(e)) = (start_node, end_node) {
+                if s != e {
+                    planner.start_search(s, e);
+                    return true;
+                }
+            }
+            return false;
+        }
+        Key::Character(c) if c.as_str() == "p" || c.as_str() == "P" => {
+            let algs = Algorithm::all();
+            let idx = algs
+                .iter()
+                .position(|&a| a == planner.config.algorithm)
+                .unwrap_or(0);
+            let new_idx = if c.as_str() == "P" {
+                (idx + algs.len() - 1) % algs.len()
+            } else {
+                (idx + 1) % algs.len()
+            };
+            planner.config.algorithm = algs[new_idx];
+            changed = true;
+        }
+        Key::Character(c)
+            if (c.as_str() == "h" || c.as_str() == "H")
+                && planner.config.algorithm.uses_heuristic() =>
+        {
+            let heurs = Heuristic::all();
+            let idx = heurs
+                .iter()
+                .position(|&h| h == planner.config.heuristic)
+                .unwrap_or(0);
+            let new_idx = if c.as_str() == "H" {
+                (idx + heurs.len() - 1) % heurs.len()
+            } else {
+                (idx + 1) % heurs.len()
+            };
+            planner.config.heuristic = heurs[new_idx];
+            changed = true;
+        }
+        Key::Character(c) if c.as_str() == "c" || c.as_str() == "C" => {
+            let modes = CostMode::all();
+            let idx = modes
+                .iter()
+                .position(|&m| m == planner.config.cost_mode)
+                .unwrap_or(0);
+            let new_idx = if c.as_str() == "C" {
+                (idx + modes.len() - 1) % modes.len()
+            } else {
+                (idx + 1) % modes.len()
+            };
+            planner.config.cost_mode = modes[new_idx];
+            changed = true;
+        }
+        Key::Character(c) if c.as_str() == "a" || c.as_str() == "A" => {
+            let algs = Algorithm::all();
+            let idx = algs
+                .iter()
+                .position(|&a| a == planner.config.algorithm)
+                .unwrap_or(0);
+            let new_idx = (idx + 1) % algs.len();
+            planner.config.algorithm = algs[new_idx];
+            changed = true;
+        }
+        Key::Character(c) if c.as_str() == "1" => {
+            *manual_lod_tier = Some(0);
+            changed = true;
+        }
+        Key::Character(c) if c.as_str() == "2" => {
+            *manual_lod_tier = Some(1);
+            changed = true;
+        }
+        Key::Character(c) if c.as_str() == "3" => {
+            *manual_lod_tier = Some(2);
+            changed = true;
+        }
+        Key::Character(c) if c.as_str() == "0" => {
+            *manual_lod_tier = None;
+            changed = true;
+        }
+        Key::Character(c) if c.as_str() == "r" => {
+            changed = randomize_route(input_state, graph, camera);
+        }
+        Key::Character(c) if c.as_str() == "s" => {
+            changed = swap_markers(input_state, graph);
+        }
+        Key::Character(c) if c.as_str() == "q" => {
+            input_state.start_marker = None;
+            input_state.end_marker = None;
+            planner.reset();
+            changed = true;
+        }
+        Key::Named(winit::keyboard::NamedKey::Escape) => {
+            input_state.start_marker = None;
+            input_state.end_marker = None;
+            planner.reset();
+            changed = true;
+        }
+        _ => {}
+    }
+
+    if changed {
+        let start_node = input_state
+            .start_marker
+            .as_ref()
+            .and_then(|m| m.snapped_node);
+        let end_node = input_state.end_marker.as_ref().and_then(|m| m.snapped_node);
+
+        if let (Some(s), Some(e)) = (start_node, end_node) {
+            if s != e {
+                planner.start_search(s, e);
+            }
+        } else {
+            planner.reset();
+        }
+    }
+
+    changed
 }

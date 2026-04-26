@@ -42,6 +42,32 @@ impl RoadClass {
             RoadClass::Other => 0.8,
         }
     }
+
+    pub fn default_speed_kmh(&self) -> f64 {
+        match self {
+            RoadClass::Motorway => 90.0,
+            RoadClass::Primary => 70.0,
+            RoadClass::Secondary => 55.0,
+            RoadClass::Tertiary => 45.0,
+            RoadClass::Residential => 30.0,
+            RoadClass::Service => 15.0,
+            RoadClass::Path => 10.0,
+            RoadClass::Other => 30.0,
+        }
+    }
+
+    pub fn intersection_stop_s(&self) -> f64 {
+        match self {
+            RoadClass::Motorway => 0.0,
+            RoadClass::Primary => 3.0,
+            RoadClass::Secondary => 5.0,
+            RoadClass::Tertiary => 7.0,
+            RoadClass::Residential => 10.0,
+            RoadClass::Service => 12.0,
+            RoadClass::Path => 12.0,
+            RoadClass::Other => 10.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -57,6 +83,7 @@ pub struct GraphEdge {
     pub from: usize,
     pub to: usize,
     pub weight_meters: f64,
+    pub travel_time_s: f64,
     pub polyline_world: Vec<[f64; 2]>,
     pub road_class: RoadClass,
     #[allow(dead_code)]
@@ -93,6 +120,8 @@ pub struct RoadGraph {
     pub edges: Vec<GraphEdge>,
     /// adjacency[node_id] = list of edge indices where edge.from == node_id
     pub adjacency: Vec<Vec<usize>>,
+    /// Precomputed distinct outgoing neighbor count per node.
+    pub node_out_degree: Vec<u8>,
     /// Non-routable visual context (buildings, landuse, pedestrian plazas).
     pub decorations: DecorationLayer,
 }
