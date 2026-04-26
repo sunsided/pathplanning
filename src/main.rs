@@ -4,24 +4,25 @@ use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::EventLoop;
+use winit::keyboard::Key;
 use winit::window::Window;
 
-mod astar;
 mod camera;
 mod graph;
 mod input;
 mod lod;
 mod osm_loader;
+mod planner;
 mod projection;
 mod renderer;
 mod spatial_index;
 mod view_index;
 
-use astar::{PlannerState, PlannerStatus};
 use camera::Camera;
 use input::{InputState, Marker, MarkerKind};
 use lod::LodPyramid;
-use renderer::{DebugOverlayState, RenderScratch};
+use planner::{Algorithm, Heuristic, PlannerState, PlannerStatus};
+use renderer::{DebugOverlayState, MenuItemKind, RenderScratch};
 use spatial_index::SpatialIndex;
 use view_index::RStarViewIndex;
 
@@ -291,6 +292,12 @@ impl ApplicationHandler for App {
                 let new_pos = [position.x as f32, position.y as f32];
                 self.input_state.drag_screen_pos = new_pos;
 
+                if !self.input_state.left_button_down {
+                    self.input_state.hover_menu_item =
+                        self.debug_overlay.menu_layout.hit_test(new_pos);
+                    self.needs_redraw = true;
+                }
+
                 if self.input_state.left_button_down {
                     if !self.input_state.is_drag && self.input_state.drag_distance() > 5.0 {
                         self.input_state.is_drag = true;
@@ -346,18 +353,34 @@ impl ApplicationHandler for App {
                             self.input_state.press_pos = screen_pos;
                             self.input_state.is_drag = false;
 
-                            let near = self.input_state.marker_near(screen_pos, 12.0, &self.camera);
-                            if let Some(kind) = near {
-                                self.input_state.dragging = Some(kind);
+                            let hud_hit = self.debug_overlay.menu_layout.hit_test(screen_pos);
+                            if hud_hit.is_some() {
+                                self.input_state.pressed_menu_item = hud_hit;
                             } else {
-                                self.input_state.pan_start = Some(screen_pos);
-                                self.input_state.pan_center_start = Some(self.camera.center);
+                                let near =
+                                    self.input_state.marker_near(screen_pos, 12.0, &self.camera);
+                                if let Some(kind) = near {
+                                    self.input_state.dragging = Some(kind);
+                                } else {
+                                    self.input_state.pan_start = Some(screen_pos);
+                                    self.input_state.pan_center_start = Some(self.camera.center);
+                                }
                             }
                         }
                         ElementState::Released => {
                             self.input_state.left_button_down = false;
 
-                            if self.input_state.dragging.is_some() {
+                            if let Some(pressed) = self.input_state.pressed_menu_item.take() {
+                                let released = self.debug_overlay.menu_layout.hit_test(screen_pos);
+                                if released == Some(pressed) {
+                                    apply_menu_choice(
+                                        pressed,
+                                        &mut self.planner,
+                                        &self.input_state,
+                                    );
+                                }
+                                self.needs_redraw = true;
+                            } else if self.input_state.dragging.is_some() {
                                 if snap_and_trigger(
                                     &mut self.input_state,
                                     &mut self.planner,
@@ -422,6 +445,18 @@ impl ApplicationHandler for App {
                 self.camera
                     .zoom_around(self.input_state.drag_screen_pos, factor);
                 self.needs_redraw = true;
+            }
+
+            WindowEvent::KeyboardInput {
+                event,
+                is_synthetic: false,
+                ..
+            } if event.state == ElementState::Pressed => {
+                let handled =
+                    handle_keyboard_input(&event.logical_key, &mut self.planner, &self.input_state);
+                if handled {
+                    self.needs_redraw = true;
+                }
             }
 
             _ => {}
@@ -575,4 +610,133 @@ fn dist2(a: [f32; 2], b: [f32; 2]) -> f32 {
     let dx = a[0] - b[0];
     let dy = a[1] - b[1];
     dx * dx + dy * dy
+}
+
+fn apply_menu_choice(item: MenuItemKind, planner: &mut PlannerState, input_state: &InputState) {
+    let changed = match item {
+        MenuItemKind::Algorithm(a) => {
+            if planner.config.algorithm != a {
+                planner.config.algorithm = a;
+                true
+            } else {
+                false
+            }
+        }
+        MenuItemKind::Heuristic(h) => {
+            if planner.config.heuristic != h {
+                planner.config.heuristic = h;
+                true
+            } else {
+                false
+            }
+        }
+    };
+
+    if !changed {
+        return;
+    }
+
+    let start_node = input_state
+        .start_marker
+        .as_ref()
+        .and_then(|m| m.snapped_node);
+    let end_node = input_state.end_marker.as_ref().and_then(|m| m.snapped_node);
+
+    if let (Some(s), Some(e)) = (start_node, end_node) {
+        if s != e {
+            planner.start_search(s, e);
+        }
+    } else {
+        planner.reset();
+    }
+}
+
+fn handle_keyboard_input(key: &Key, planner: &mut PlannerState, input_state: &InputState) -> bool {
+    let mut changed = false;
+
+    match key {
+        Key::Character(c) if c.as_str() == "p" || c.as_str() == "P" => {
+            let algs = Algorithm::all();
+            let idx = algs
+                .iter()
+                .position(|&a| a == planner.config.algorithm)
+                .unwrap_or(0);
+            let new_idx = if c.as_str() == "P" {
+                (idx + algs.len() - 1) % algs.len()
+            } else {
+                (idx + 1) % algs.len()
+            };
+            planner.config.algorithm = algs[new_idx];
+            changed = true;
+        }
+        Key::Character(c) if (c.as_str() == "h" || c.as_str() == "H")
+            && planner.config.algorithm.uses_heuristic() => {
+                let heurs = Heuristic::all();
+                let idx = heurs
+                    .iter()
+                    .position(|&h| h == planner.config.heuristic)
+                    .unwrap_or(0);
+                let new_idx = if c.as_str() == "H" {
+                    (idx + heurs.len() - 1) % heurs.len()
+                } else {
+                    (idx + 1) % heurs.len()
+                };
+                planner.config.heuristic = heurs[new_idx];
+                changed = true;
+            }
+        Key::Character(c) if c.as_str() == "1" => {
+            planner.config.algorithm = Algorithm::AStar;
+            changed = true;
+        }
+        Key::Character(c) if c.as_str() == "2" => {
+            planner.config.algorithm = Algorithm::Dijkstra;
+            changed = true;
+        }
+        Key::Character(c) if c.as_str() == "3" => {
+            planner.config.algorithm = Algorithm::GreedyBestFirst;
+            changed = true;
+        }
+        Key::Character(c) if c.as_str() == "r" => {
+            // Re-run current search
+            let start_node = input_state
+                .start_marker
+                .as_ref()
+                .and_then(|m| m.snapped_node);
+            let end_node = input_state.end_marker.as_ref().and_then(|m| m.snapped_node);
+            if let (Some(s), Some(e)) = (start_node, end_node) {
+                if s != e {
+                    planner.start_search(s, e);
+                    changed = true;
+                }
+            }
+        }
+        Key::Character(c) if c.as_str() == "q" => {
+            // Clear markers + reset
+            planner.reset();
+            changed = true;
+        }
+        Key::Named(winit::keyboard::NamedKey::Escape) => {
+            planner.reset();
+            changed = true;
+        }
+        _ => {}
+    }
+
+    if changed {
+        let start_node = input_state
+            .start_marker
+            .as_ref()
+            .and_then(|m| m.snapped_node);
+        let end_node = input_state.end_marker.as_ref().and_then(|m| m.snapped_node);
+
+        if let (Some(s), Some(e)) = (start_node, end_node) {
+            if s != e {
+                planner.start_search(s, e);
+            }
+        } else {
+            planner.reset();
+        }
+    }
+
+    changed
 }

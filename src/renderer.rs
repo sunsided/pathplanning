@@ -1,8 +1,9 @@
-use crate::astar::{PlannerState, PlannerStatus};
 use crate::camera::Camera;
 use crate::graph::{DecorationKind, RoadClass, RoadGraph};
 use crate::input::InputState;
 use crate::lod::LodPyramid;
+use crate::planner::heuristic::Heuristic;
+use crate::planner::state::{Algorithm, PlannerConfig, PlannerState, PlannerStatus};
 use crate::view_index::ViewportIndex;
 use std::fmt::Write;
 
@@ -12,13 +13,55 @@ use vello::Scene;
 
 pub struct DebugOverlayState {
     pub line_buf: String,
+    pub menu_layout: MenuLayout,
 }
 
 impl Default for DebugOverlayState {
     fn default() -> Self {
         Self {
             line_buf: String::with_capacity(64),
+            menu_layout: MenuLayout::default(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuItemKind {
+    Algorithm(Algorithm),
+    Heuristic(Heuristic),
+}
+
+#[derive(Debug, Clone)]
+pub struct MenuLayout {
+    pub panel_rect: [f32; 4],
+    pub items: Vec<([f32; 4], MenuItemKind)>,
+}
+
+impl Default for MenuLayout {
+    fn default() -> Self {
+        Self {
+            panel_rect: [0.0; 4],
+            items: Vec::new(),
+        }
+    }
+}
+
+impl MenuLayout {
+    pub fn hit_test(&self, pos: [f32; 2]) -> Option<MenuItemKind> {
+        let [px, py, pw, ph] = self.panel_rect;
+        if pos[0] < px || pos[0] > px + pw || pos[1] < py || pos[1] > py + ph {
+            return None;
+        }
+        for (rect, kind) in &self.items {
+            if pos[0] >= rect[0]
+                && pos[0] <= rect[0] + rect[2]
+                && pos[1] >= rect[1]
+                && pos[1] <= rect[1] + rect[3]
+            {
+                return Some(*kind);
+            }
+        }
+        None
     }
 }
 
@@ -46,6 +89,8 @@ fn rgba(r: u8, g: u8, b: u8, a: u8) -> Color {
 fn get_glyph(c: u8) -> [u8; 8] {
     match c {
         b' ' => [0x00; 8],
+        b'*' => [0x00, 0x66, 0x3C, 0xFF, 0x3C, 0x66, 0x00, 0x00],
+        b'>' => [0x60, 0x30, 0x18, 0x0C, 0x18, 0x30, 0x60, 0x00],
         b'-' => [0x00, 0x00, 0x00, 0x7E, 0x00, 0x00, 0x00, 0x00],
         b'.' => [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18],
         b':' => [0x00, 0x18, 0x18, 0x00, 0x00, 0x18, 0x18, 0x00],
@@ -206,7 +251,7 @@ pub fn render(
     debug_overlay: &mut DebugOverlayState,
     scratch: &mut RenderScratch,
     width: u32,
-    _height: u32,
+    height: u32,
 ) {
     let (vmin_x, vmin_y, vmax_x, vmax_y) = camera.visible_world_aabb(32.0);
 
@@ -274,6 +319,15 @@ pub fn render(
 
     // Layer 7: debug overlay.
     draw_debug(graph, camera, planner, pyramid, scene, debug_overlay);
+
+    // Layer 8: HUD menu.
+    debug_overlay.menu_layout = draw_hud(
+        scene,
+        &planner.config,
+        input_state.hover_menu_item,
+        width,
+        height,
+    );
 }
 
 fn decor_fill_style(kind: DecorationKind) -> (u8, u8, u8, u8) {
@@ -726,4 +780,225 @@ fn draw_debug(
     emit_line!("STATUS: {}", status_str);
     emit_line!("EXPANDED: {}", planner.expanded_count);
     emit_line!("PATH: {:.0}M", planner.locked_path_dist);
+    emit_line!("ALGO: {}", planner.config.algorithm.name());
+    if planner.config.algorithm.uses_heuristic() {
+        emit_line!("HEUR: {}", planner.config.heuristic.name());
+    } else {
+        emit_line!("HEUR: (n/a)");
+    }
+}
+
+pub fn draw_hud(
+    scene: &mut Scene,
+    config: &PlannerConfig,
+    hover_item: Option<MenuItemKind>,
+    width: u32,
+    _height: u32,
+) -> MenuLayout {
+    let padding = 8f32;
+    let row_h = 12f32;
+    let char_w = 9f32;
+    let margin = 10f32;
+
+    let algorithms = Algorithm::all();
+    let heuristics = Heuristic::all();
+
+    let mut max_chars = 0;
+    for &alg in algorithms {
+        let chars = alg.short_label().len();
+        max_chars = max_chars.max(chars + 3);
+    }
+    for &heur in heuristics {
+        let chars = heur.short_label().len();
+        max_chars = max_chars.max(chars + 3);
+    }
+    max_chars = max_chars.max("PLANNER".len() + 2);
+    max_chars = max_chars.max("HEURISTIC".len() + 2);
+
+    let panel_w = max_chars as f32 * char_w + padding * 2f32;
+    // 2 header rows + 2 separator rows + 1 spacer row + algorithm rows + heuristic rows
+    let num_rows = 2 + 2 + 1 + algorithms.len() + heuristics.len();
+    let panel_h = num_rows as f32 * row_h + padding * 2f32;
+
+    let panel_x = width as f32 - panel_w - margin;
+    let panel_y = margin;
+
+    let panel_rect = [panel_x, panel_y, panel_w, panel_h];
+
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        rgba(10, 14, 26, 200),
+        None,
+        &vello::kurbo::Rect::new(
+            panel_x as f64,
+            panel_y as f64,
+            (panel_x + panel_w) as f64,
+            (panel_y + panel_h) as f64,
+        ),
+    );
+
+    scene.stroke(
+        &Stroke::new(1.0),
+        Affine::IDENTITY,
+        rgba(60, 80, 120, 255),
+        None,
+        &vello::kurbo::Rect::new(
+            panel_x as f64,
+            panel_y as f64,
+            (panel_x + panel_w) as f64,
+            (panel_y + panel_h) as f64,
+        ),
+    );
+
+    let mut layout = MenuLayout {
+        panel_rect,
+        items: Vec::with_capacity(algorithms.len() + heuristics.len()),
+    };
+
+    let mut row = 0;
+    let text_color = rgba(180, 220, 255, 255);
+    let dim_color = rgba(100, 120, 150, 180);
+    let hover_color = rgba(40, 60, 100, 180);
+    let shadow_color = rgba(0, 0, 0, 255);
+
+    let draw_row_text = |scene: &mut Scene, text: &str, x: f32, y: f32, color: Color| {
+        draw_text(scene, x + 1.0, y + 1.0, text, shadow_color);
+        draw_text(scene, x, y, text, color);
+    };
+
+    // "PLANNER" header
+    let header_y = panel_y + padding + row as f32 * row_h;
+    draw_row_text(
+        scene,
+        "PLANNER",
+        panel_x + padding,
+        header_y,
+        rgba(120, 160, 220, 255),
+    );
+    row += 1;
+
+    // Separator line
+    let sep_y = header_y + row_h - 1f32;
+    scene.stroke(
+        &Stroke::new(0.5),
+        Affine::IDENTITY,
+        rgba(60, 80, 120, 150),
+        None,
+        &vello::kurbo::Line::new(
+            ((panel_x + padding) as f64, sep_y as f64),
+            ((panel_x + panel_w - padding) as f64, sep_y as f64),
+        ),
+    );
+    row += 1;
+
+    // Algorithm rows
+    for &alg in algorithms {
+        let item_y = panel_y + padding + row as f32 * row_h;
+        let item_x = panel_x + padding;
+        let item_w = panel_w - padding * 2f32;
+
+        let is_selected = config.algorithm == alg;
+        let is_hovered = matches!(hover_item, Some(MenuItemKind::Algorithm(a)) if a == alg);
+
+        if is_hovered {
+            scene.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                hover_color,
+                None,
+                &vello::kurbo::Rect::new(
+                    item_x as f64,
+                    item_y as f64,
+                    (item_x + item_w) as f64,
+                    (item_y + row_h) as f64,
+                ),
+            );
+        }
+
+        let prefix = if is_selected { "> " } else { "  " };
+        let label = format!("{}{}", prefix, alg.short_label());
+        let color = if is_selected { text_color } else { dim_color };
+        draw_row_text(scene, &label, item_x, item_y, color);
+
+        layout.items.push((
+            [item_x, item_y, item_w, row_h],
+            MenuItemKind::Algorithm(alg),
+        ));
+        row += 1;
+    }
+
+    // Spacer row between groups
+    row += 1;
+
+    // "HEURISTIC" header
+    let header_y2 = panel_y + padding + row as f32 * row_h;
+    draw_row_text(
+        scene,
+        "HEURISTIC",
+        panel_x + padding,
+        header_y2,
+        rgba(120, 160, 220, 255),
+    );
+    row += 1;
+
+    let sep_y2 = header_y2 + row_h - 1f32;
+    scene.stroke(
+        &Stroke::new(0.5),
+        Affine::IDENTITY,
+        rgba(60, 80, 120, 150),
+        None,
+        &vello::kurbo::Line::new(
+            ((panel_x + padding) as f64, sep_y2 as f64),
+            ((panel_x + panel_w - padding) as f64, sep_y2 as f64),
+        ),
+    );
+    row += 1;
+
+    // Heuristic rows
+    let heur_disabled = !config.algorithm.uses_heuristic();
+    for &heur in heuristics {
+        let item_y = panel_y + padding + row as f32 * row_h;
+        let item_x = panel_x + padding;
+        let item_w = panel_w - padding * 2f32;
+
+        let is_selected = config.heuristic == heur;
+        let is_hovered = matches!(hover_item, Some(MenuItemKind::Heuristic(h)) if h == heur);
+
+        if is_hovered {
+            scene.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                hover_color,
+                None,
+                &vello::kurbo::Rect::new(
+                    item_x as f64,
+                    item_y as f64,
+                    (item_x + item_w) as f64,
+                    (item_y + row_h) as f64,
+                ),
+            );
+        }
+
+        let prefix = if is_selected { "> " } else { "  " };
+        let label = format!("{}{}", prefix, heur.short_label());
+        let color = if is_selected {
+            text_color
+        } else if heur_disabled {
+            rgba(80, 90, 110, 120)
+        } else {
+            dim_color
+        };
+        draw_row_text(scene, &label, item_x, item_y, color);
+
+        if !heur_disabled {
+            layout.items.push((
+                [item_x, item_y, item_w, row_h],
+                MenuItemKind::Heuristic(heur),
+            ));
+        }
+        row += 1;
+    }
+
+    layout
 }

@@ -1,3 +1,5 @@
+use crate::renderer::MenuItemKind;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarkerKind {
     Start,
@@ -25,6 +27,8 @@ pub struct InputState {
     pub press_pos: [f32; 2],
     /// True if the mouse has moved enough from press_pos to be a drag.
     pub is_drag: bool,
+    pub hover_menu_item: Option<MenuItemKind>,
+    pub pressed_menu_item: Option<MenuItemKind>,
 }
 
 impl InputState {
@@ -40,6 +44,8 @@ impl InputState {
             right_button_down: false,
             press_pos: [0.0, 0.0],
             is_drag: false,
+            hover_menu_item: None,
+            pressed_menu_item: None,
         }
     }
 
