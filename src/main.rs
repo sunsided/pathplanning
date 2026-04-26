@@ -452,8 +452,12 @@ impl ApplicationHandler for App {
                 is_synthetic: false,
                 ..
             } if event.state == ElementState::Pressed => {
-                let handled =
-                    handle_keyboard_input(&event.logical_key, &mut self.planner, &self.input_state);
+                let handled = handle_keyboard_input(
+                    &event.logical_key,
+                    &mut self.planner,
+                    &mut self.input_state,
+                    &self.graph,
+                );
                 if handled {
                     self.needs_redraw = true;
                 }
@@ -651,7 +655,12 @@ fn apply_menu_choice(item: MenuItemKind, planner: &mut PlannerState, input_state
     }
 }
 
-fn handle_keyboard_input(key: &Key, planner: &mut PlannerState, input_state: &InputState) -> bool {
+fn handle_keyboard_input(
+    key: &Key,
+    planner: &mut PlannerState,
+    input_state: &mut InputState,
+    graph: &graph::RoadGraph,
+) -> bool {
     let mut changed = false;
 
     match key {
@@ -669,21 +678,23 @@ fn handle_keyboard_input(key: &Key, planner: &mut PlannerState, input_state: &In
             planner.config.algorithm = algs[new_idx];
             changed = true;
         }
-        Key::Character(c) if (c.as_str() == "h" || c.as_str() == "H")
-            && planner.config.algorithm.uses_heuristic() => {
-                let heurs = Heuristic::all();
-                let idx = heurs
-                    .iter()
-                    .position(|&h| h == planner.config.heuristic)
-                    .unwrap_or(0);
-                let new_idx = if c.as_str() == "H" {
-                    (idx + heurs.len() - 1) % heurs.len()
-                } else {
-                    (idx + 1) % heurs.len()
-                };
-                planner.config.heuristic = heurs[new_idx];
-                changed = true;
-            }
+        Key::Character(c)
+            if (c.as_str() == "h" || c.as_str() == "H")
+                && planner.config.algorithm.uses_heuristic() =>
+        {
+            let heurs = Heuristic::all();
+            let idx = heurs
+                .iter()
+                .position(|&h| h == planner.config.heuristic)
+                .unwrap_or(0);
+            let new_idx = if c.as_str() == "H" {
+                (idx + heurs.len() - 1) % heurs.len()
+            } else {
+                (idx + 1) % heurs.len()
+            };
+            planner.config.heuristic = heurs[new_idx];
+            changed = true;
+        }
         Key::Character(c) if c.as_str() == "1" => {
             planner.config.algorithm = Algorithm::AStar;
             changed = true;
@@ -697,25 +708,56 @@ fn handle_keyboard_input(key: &Key, planner: &mut PlannerState, input_state: &In
             changed = true;
         }
         Key::Character(c) if c.as_str() == "r" => {
-            // Re-run current search
-            let start_node = input_state
-                .start_marker
-                .as_ref()
-                .and_then(|m| m.snapped_node);
-            let end_node = input_state.end_marker.as_ref().and_then(|m| m.snapped_node);
-            if let (Some(s), Some(e)) = (start_node, end_node) {
-                if s != e {
-                    planner.start_search(s, e);
-                    changed = true;
+            let routable: Vec<usize> = graph
+                .adjacency
+                .iter()
+                .enumerate()
+                .filter(|(_, edges)| !edges.is_empty())
+                .map(|(id, _)| id)
+                .collect();
+
+            if routable.len() >= 2 {
+                let mut seed = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos() as u64;
+                let mut rng = |max: usize| -> usize {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    (seed as usize) % max
+                };
+
+                let start_idx = rng(routable.len());
+                let mut end_idx = rng(routable.len());
+                while end_idx == start_idx {
+                    end_idx = rng(routable.len());
                 }
+
+                let start_node = routable[start_idx];
+                let end_node = routable[end_idx];
+
+                input_state.start_marker = Some(Marker {
+                    world_pos: graph.nodes[start_node].world_pos,
+                    snapped_node: Some(start_node),
+                });
+                input_state.end_marker = Some(Marker {
+                    world_pos: graph.nodes[end_node].world_pos,
+                    snapped_node: Some(end_node),
+                });
+
+                changed = true;
             }
         }
         Key::Character(c) if c.as_str() == "q" => {
-            // Clear markers + reset
+            input_state.start_marker = None;
+            input_state.end_marker = None;
             planner.reset();
             changed = true;
         }
         Key::Named(winit::keyboard::NamedKey::Escape) => {
+            input_state.start_marker = None;
+            input_state.end_marker = None;
             planner.reset();
             changed = true;
         }
