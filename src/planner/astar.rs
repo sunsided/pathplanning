@@ -37,11 +37,11 @@ pub fn step_astar(state: &mut PlannerState, graph: &RoadGraph, n_steps: usize) -
         state.expanded_count += 1;
 
         if current == goal {
-            let path = reconstruct_path(state, goal);
-            let dist = *state.g_score.get(&goal).unwrap_or(&0.0);
+            let path = state.reconstruct_path(goal);
             state.best_path = Some(path.clone());
-            state.locked_path = Some(path);
-            state.locked_path_dist = dist;
+            state.locked_path = Some(path.clone());
+            state.fill_path_metrics(graph, &path);
+            state.locked_path_dist_m = *state.g_score.get(&goal).unwrap_or(&0.0);
             if state.status == PlannerStatus::Searching {
                 state.status = PlannerStatus::FirstMatchFound;
             }
@@ -62,14 +62,17 @@ pub fn step_astar(state: &mut PlannerState, graph: &RoadGraph, n_steps: usize) -
                 continue;
             }
 
-            let new_g = g + edge.weight_meters;
+            let new_g = g + PlannerState::edge_cost(graph, edge, state.config.cost_mode);
             let old_g = *state.g_score.get(&neighbor).unwrap_or(&f64::INFINITY);
 
             if new_g < old_g {
                 state.came_from.insert(neighbor, current);
                 state.g_score.insert(neighbor, new_g);
 
-                let h = state.config.heuristic.eval(graph, neighbor, goal);
+                let h = state
+                    .config
+                    .heuristic
+                    .eval(graph, neighbor, goal, state.config.cost_mode);
                 let f = new_g + h;
 
                 if let Ok(f_ord) = NotNan::new(f) {
@@ -84,20 +87,4 @@ pub fn step_astar(state: &mut PlannerState, graph: &RoadGraph, n_steps: usize) -
     }
 
     state.status == PlannerStatus::Searching
-}
-
-fn reconstruct_path(state: &PlannerState, goal: usize) -> Vec<usize> {
-    let mut path = vec![goal];
-    let mut current = goal;
-    let mut steps = 0;
-    while let Some(&prev) = state.came_from.get(&current) {
-        path.push(prev);
-        current = prev;
-        steps += 1;
-        if steps > 1_000_000 {
-            break;
-        }
-    }
-    path.reverse();
-    path
 }

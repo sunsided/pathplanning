@@ -21,7 +21,7 @@ mod view_index;
 use camera::Camera;
 use input::{InputState, Marker, MarkerKind};
 use lod::LodPyramid;
-use planner::{Algorithm, Heuristic, PlannerState, PlannerStatus};
+use planner::{Algorithm, CostMode, Heuristic, PlannerState, PlannerStatus};
 use renderer::{DebugOverlayState, MenuItemKind, RenderScratch};
 use spatial_index::SpatialIndex;
 use view_index::RStarViewIndex;
@@ -648,6 +648,14 @@ fn apply_menu_choice(
                 false
             }
         }
+        MenuItemKind::CostMode(m) => {
+            if planner.config.cost_mode != m {
+                planner.config.cost_mode = m;
+                true
+            } else {
+                false
+            }
+        }
         MenuItemKind::Swap => swap_markers(input_state, graph, planner),
         MenuItemKind::Random => randomize_route(input_state, graph, camera),
     };
@@ -797,6 +805,20 @@ fn handle_keyboard_input(
                 (idx + 1) % heurs.len()
             };
             planner.config.heuristic = heurs[new_idx];
+            changed = true;
+        }
+        Key::Character(c) if c.as_str() == "c" || c.as_str() == "C" => {
+            let modes = CostMode::all();
+            let idx = modes
+                .iter()
+                .position(|&m| m == planner.config.cost_mode)
+                .unwrap_or(0);
+            let new_idx = if c.as_str() == "C" {
+                (idx + modes.len() - 1) % modes.len()
+            } else {
+                (idx + 1) % modes.len()
+            };
+            planner.config.cost_mode = modes[new_idx];
             changed = true;
         }
         Key::Character(c) if c.as_str() == "1" => {

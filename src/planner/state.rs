@@ -1,4 +1,4 @@
-use crate::graph::RoadGraph;
+use crate::graph::{GraphEdge, RoadGraph};
 use crate::planner::heuristic::Heuristic;
 use ordered_float::NotNan;
 use std::cmp::Reverse;
@@ -29,6 +29,32 @@ impl Ord for HeapEntry {
         self.cost
             .cmp(&other.cost)
             .then(self.node_id.cmp(&other.node_id))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CostMode {
+    ShortestPath,
+    ShortestTime,
+}
+
+impl CostMode {
+    pub fn name(&self) -> &'static str {
+        match self {
+            CostMode::ShortestPath => "Shortest Path",
+            CostMode::ShortestTime => "Shortest Time",
+        }
+    }
+
+    pub fn short_label(&self) -> &'static str {
+        match self {
+            CostMode::ShortestPath => "Dist",
+            CostMode::ShortestTime => "Time",
+        }
+    }
+
+    pub fn all() -> &'static [CostMode] {
+        &[CostMode::ShortestPath, CostMode::ShortestTime]
     }
 }
 
@@ -76,6 +102,7 @@ impl Algorithm {
 pub struct PlannerConfig {
     pub algorithm: Algorithm,
     pub heuristic: Heuristic,
+    pub cost_mode: CostMode,
 }
 
 impl Default for PlannerConfig {
@@ -83,6 +110,7 @@ impl Default for PlannerConfig {
         Self {
             algorithm: Algorithm::AStar,
             heuristic: Heuristic::Euclidean,
+            cost_mode: CostMode::ShortestTime,
         }
     }
 }
@@ -96,7 +124,8 @@ pub struct PlannerState {
     pub frontier: HashSet<usize>,
     pub best_path: Option<Vec<usize>>,
     pub locked_path: Option<Vec<usize>>,
-    pub locked_path_dist: f64,
+    pub locked_path_dist_m: f64,
+    pub locked_path_time_s: f64,
     pub status: PlannerStatus,
     pub expanded_count: usize,
     pub goal: Option<usize>,
@@ -113,7 +142,8 @@ impl PlannerState {
             frontier: HashSet::new(),
             best_path: None,
             locked_path: None,
-            locked_path_dist: 0.0,
+            locked_path_dist_m: 0.0,
+            locked_path_time_s: 0.0,
             status: PlannerStatus::Idle,
             expanded_count: 0,
             goal: None,
@@ -128,7 +158,8 @@ impl PlannerState {
         self.frontier.clear();
         self.best_path = None;
         self.locked_path = None;
-        self.locked_path_dist = 0.0;
+        self.locked_path_dist_m = 0.0;
+        self.locked_path_time_s = 0.0;
         self.status = PlannerStatus::Idle;
         self.expanded_count = 0;
         self.goal = None;
@@ -181,5 +212,41 @@ impl PlannerState {
         }
         path.reverse();
         path
+    }
+
+    /// Compute the cost of traversing a single edge under the given cost mode.
+    pub(crate) fn edge_cost(graph: &RoadGraph, edge: &GraphEdge, mode: CostMode) -> f64 {
+        match mode {
+            CostMode::ShortestPath => edge.weight_meters,
+            CostMode::ShortestTime => {
+                let deg = graph.node_out_degree.get(edge.to).copied().unwrap_or(0);
+                let stop = if deg >= 3 {
+                    edge.road_class.intersection_stop_s()
+                } else {
+                    0.0
+                };
+                edge.travel_time_s + stop
+            }
+        }
+    }
+
+    /// Walk the path once at match time to fill both distance and time metrics.
+    pub(crate) fn fill_path_metrics(&mut self, graph: &RoadGraph, path: &[usize]) {
+        let mut dist_m = 0.0;
+        let mut time_s = 0.0;
+        for i in 0..path.len().saturating_sub(1) {
+            let from = path[i];
+            let to = path[i + 1];
+            for &edge_idx in &graph.adjacency[from] {
+                let edge = &graph.edges[edge_idx];
+                if edge.to == to {
+                    dist_m += edge.weight_meters;
+                    time_s += Self::edge_cost(graph, edge, CostMode::ShortestTime);
+                    break;
+                }
+            }
+        }
+        self.locked_path_dist_m = dist_m;
+        self.locked_path_time_s = time_s;
     }
 }

@@ -3,7 +3,7 @@ use crate::graph::{DecorationKind, RoadClass, RoadGraph};
 use crate::input::InputState;
 use crate::lod::LodPyramid;
 use crate::planner::heuristic::Heuristic;
-use crate::planner::state::{Algorithm, PlannerConfig, PlannerState, PlannerStatus};
+use crate::planner::state::{Algorithm, CostMode, PlannerConfig, PlannerState, PlannerStatus};
 use crate::view_index::ViewportIndex;
 use std::fmt::Write;
 
@@ -29,6 +29,7 @@ impl Default for DebugOverlayState {
 pub enum MenuItemKind {
     Algorithm(Algorithm),
     Heuristic(Heuristic),
+    CostMode(CostMode),
     Random,
     Swap,
 }
@@ -786,7 +787,17 @@ fn draw_debug(
     emit_line!("DECOR_LOD: {}", lod.decorations.len());
     emit_line!("STATUS: {}", status_str);
     emit_line!("EXPANDED: {}", planner.expanded_count);
-    emit_line!("PATH: {:.0}M", planner.locked_path_dist);
+    emit_line!("PATH: {:.0}M", planner.locked_path_dist_m);
+    let time_s = planner.locked_path_time_s;
+    if time_s >= 3600.0 {
+        let h = time_s as u64 / 3600;
+        let m = (time_s as u64 % 3600) / 60;
+        let s = time_s as u64 % 60;
+        emit_line!("TIME: {}:{:02}:{:02}", h, m, s);
+    } else {
+        emit_line!("TIME: {:.0}s", time_s);
+    }
+    emit_line!("MODE: {}", planner.config.cost_mode.name());
     emit_line!("ALGO: {}", planner.config.algorithm.name());
     if planner.config.algorithm.uses_heuristic() {
         emit_line!("HEUR: {}", planner.config.heuristic.name());
@@ -809,6 +820,7 @@ pub fn draw_hud(
 
     let algorithms = Algorithm::all();
     let heuristics = Heuristic::all();
+    let cost_modes = CostMode::all();
 
     let mut max_chars = 0;
     for &alg in algorithms {
@@ -819,12 +831,16 @@ pub fn draw_hud(
         let chars = heur.short_label().len();
         max_chars = max_chars.max(chars + 3);
     }
+    for &cm in cost_modes {
+        let chars = cm.short_label().len();
+        max_chars = max_chars.max(chars + 3);
+    }
     max_chars = max_chars.max("PLANNER".len() + 2);
     max_chars = max_chars.max("HEURISTIC".len() + 2);
+    max_chars = max_chars.max("COST".len() + 2);
 
     let panel_w = max_chars as f32 * char_w + padding * 2f32;
-    // 2 header rows + 2 separator rows + 1 spacer row + algorithm rows + heuristic rows + 1 separator + 2 action rows
-    let num_rows = 2 + 2 + 1 + algorithms.len() + heuristics.len() + 1 + 2;
+    let num_rows = 2 + 2 + 1 + algorithms.len() + 1 + 2 + 1 + heuristics.len() + 1 + 2 + 1 + 2;
     let panel_h = num_rows as f32 * row_h + padding * 2f32;
 
     let panel_x = width as f32 - panel_w - margin;
@@ -860,7 +876,7 @@ pub fn draw_hud(
 
     let mut layout = MenuLayout {
         panel_rect,
-        items: Vec::with_capacity(algorithms.len() + heuristics.len()),
+        items: Vec::with_capacity(algorithms.len() + heuristics.len() + cost_modes.len()),
     };
 
     let mut row = 0;
@@ -936,6 +952,68 @@ pub fn draw_hud(
     }
 
     // Spacer row between groups
+    row += 1;
+
+    // "COST" header
+    let header_cost_y = panel_y + padding + row as f32 * row_h;
+    draw_row_text(
+        scene,
+        "COST",
+        panel_x + padding,
+        header_cost_y,
+        rgba(120, 160, 220, 255),
+    );
+    row += 1;
+
+    let sep_cost = header_cost_y + row_h - 1f32;
+    scene.stroke(
+        &Stroke::new(0.5),
+        Affine::IDENTITY,
+        rgba(60, 80, 120, 150),
+        None,
+        &vello::kurbo::Line::new(
+            ((panel_x + padding) as f64, sep_cost as f64),
+            ((panel_x + panel_w - padding) as f64, sep_cost as f64),
+        ),
+    );
+    row += 1;
+
+    // Cost mode rows
+    for &cm in cost_modes {
+        let item_y = panel_y + padding + row as f32 * row_h;
+        let item_x = panel_x + padding;
+        let item_w = panel_w - padding * 2f32;
+
+        let is_selected = config.cost_mode == cm;
+        let is_hovered = matches!(hover_item, Some(MenuItemKind::CostMode(c)) if c == cm);
+
+        if is_hovered {
+            scene.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                hover_color,
+                None,
+                &vello::kurbo::Rect::new(
+                    item_x as f64,
+                    item_y as f64,
+                    (item_x + item_w) as f64,
+                    (item_y + row_h) as f64,
+                ),
+            );
+        }
+
+        let prefix = if is_selected { "> " } else { "  " };
+        let label = format!("{}{}", prefix, cm.short_label());
+        let color = if is_selected { text_color } else { dim_color };
+        draw_row_text(scene, &label, item_x, item_y, color);
+
+        layout
+            .items
+            .push(([item_x, item_y, item_w, row_h], MenuItemKind::CostMode(cm)));
+        row += 1;
+    }
+
+    // Spacer row before heuristics
     row += 1;
 
     // "HEURISTIC" header

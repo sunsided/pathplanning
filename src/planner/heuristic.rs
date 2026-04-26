@@ -1,4 +1,7 @@
 use crate::graph::RoadGraph;
+use crate::planner::state::CostMode;
+
+const MAX_SPEED_MPS: f64 = 25.0; // 90 km/h motorway
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Heuristic {
@@ -36,7 +39,7 @@ impl Heuristic {
         ]
     }
 
-    pub fn eval(&self, graph: &RoadGraph, from: usize, to: usize) -> f64 {
+    pub fn eval(&self, graph: &RoadGraph, from: usize, to: usize, mode: CostMode) -> f64 {
         let n = graph.nodes.len();
         if from >= n || to >= n {
             return 0.0;
@@ -46,7 +49,7 @@ impl Heuristic {
         let dx = (p1[0] - p2[0]).abs();
         let dy = (p1[1] - p2[1]).abs();
 
-        match self {
+        let dist_m = match self {
             Heuristic::Zero => 0.0,
             Heuristic::Euclidean => (dx * dx + dy * dy).sqrt(),
             Heuristic::Manhattan => dx + dy,
@@ -55,6 +58,11 @@ impl Heuristic {
                 let dmax = dx.max(dy);
                 (dmax - dmin) + dmin * 2.0_f64.sqrt()
             }
+        };
+
+        match mode {
+            CostMode::ShortestPath => dist_m,
+            CostMode::ShortestTime => dist_m / MAX_SPEED_MPS,
         }
     }
 }

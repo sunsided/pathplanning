@@ -6,4 +6,4 @@ pub mod state;
 
 pub use heuristic::Heuristic;
 #[allow(unused_imports)]
-pub use state::{Algorithm, PlannerConfig, PlannerState, PlannerStatus};
+pub use state::{Algorithm, CostMode, PlannerConfig, PlannerState, PlannerStatus};
