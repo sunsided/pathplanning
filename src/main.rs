@@ -19,7 +19,7 @@ use astar::{PlannerState, PlannerStatus};
 use camera::Camera;
 use input::{InputState, Marker, MarkerKind};
 use spatial_index::SpatialIndex;
-use view_index::QuadTreeViewIndex;
+use view_index::RStarViewIndex;
 
 fn main() {
     env_logger::init();
@@ -48,7 +48,7 @@ fn main() {
 
     // Build spatial index.
     let spatial_index = SpatialIndex::build(&graph);
-    let view_index = QuadTreeViewIndex::build(&graph);
+    let view_index = RStarViewIndex::build(&graph);
 
     // Initialise input and planner state.
     let mut input_state = InputState::new();

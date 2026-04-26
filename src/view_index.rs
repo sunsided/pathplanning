@@ -1,11 +1,18 @@
-use crate::graph::RoadGraph;
-use space_partitioning::quadtree::{QuadRect, QuadTree, QuadTreeElement, AABB};
+#[allow(dead_code)]
+use space_partitioning::quadtree::{AABB, QuadRect, QuadTree, QuadTreeElement};
+#[allow(dead_code)]
 type ElementId = i32;
-use rstar::{RTree, RTreeObject, AABB as RStarAABB};
+use rstar::{AABB as RStarAABB, RTree, RTreeObject};
 
+use crate::graph::RoadGraph;
+
+#[allow(dead_code)]
 pub(crate) const MAX_DEPTH: u8 = 8;
+#[allow(dead_code)]
 pub(crate) const SPLIT_THRESHOLD: u32 = 8;
+#[allow(dead_code)]
 pub(crate) const MIN_NODE_SIZE: u32 = 4;
+#[allow(dead_code)]
 pub(crate) const MARGIN_FRACTION: f64 = 0.01;
 
 pub trait ViewportIndex {
@@ -13,6 +20,7 @@ pub trait ViewportIndex {
     fn decorations_in(&self, min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Vec<usize>;
 }
 
+#[allow(dead_code)]
 pub struct QuadTreeViewIndex {
     edge_tree: QuadTree<ElementId>,
     decor_tree: QuadTree<ElementId>,
@@ -22,7 +30,6 @@ pub struct QuadTreeViewIndex {
     scale: f64,
 }
 
-#[allow(dead_code)]
 struct RStarEdge {
     id: usize,
     envelope: RStarAABB<[f64; 2]>,
@@ -31,11 +38,10 @@ struct RStarEdge {
 impl RTreeObject for RStarEdge {
     type Envelope = RStarAABB<[f64; 2]>;
     fn envelope(&self) -> Self::Envelope {
-        self.envelope
+        self.envelope.clone()
     }
 }
 
-#[allow(dead_code)]
 struct RStarDecor {
     id: usize,
     envelope: RStarAABB<[f64; 2]>,
@@ -44,11 +50,10 @@ struct RStarDecor {
 impl RTreeObject for RStarDecor {
     type Envelope = RStarAABB<[f64; 2]>;
     fn envelope(&self) -> Self::Envelope {
-        self.envelope
+        self.envelope.clone()
     }
 }
 
-#[allow(dead_code)]
 pub struct RStarViewIndex {
     edge_tree: RTree<RStarEdge>,
     decor_tree: RTree<RStarDecor>,
@@ -70,6 +75,7 @@ fn compute_polyline_aabb(polyline: &[[f64; 2]]) -> (f64, f64, f64, f64) {
     (min_x, min_y, max_x, max_y)
 }
 
+#[allow(dead_code)]
 fn world_to_quant(wx: f64, origin: f64, scale: f64) -> i32 {
     ((wx - origin) * scale).round() as i32
 }
@@ -78,6 +84,7 @@ fn intersects(a: &[f64; 4], min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> b
     a[0] <= max_x && a[2] >= min_x && a[1] <= max_y && a[3] >= min_y
 }
 
+#[allow(dead_code)]
 fn build_quant_index(
     graph: &RoadGraph,
 ) -> (
@@ -139,6 +146,7 @@ fn build_quant_index(
     )
 }
 
+#[allow(dead_code)]
 impl QuadTreeViewIndex {
     pub fn build(graph: &RoadGraph) -> Self {
         let (edge_tree, edge_aabbs, decor_tree, decor_aabbs, origin, scale) =
@@ -206,7 +214,6 @@ impl ViewportIndex for QuadTreeViewIndex {
     }
 }
 
-#[allow(dead_code)]
 impl RStarViewIndex {
     pub fn build(graph: &RoadGraph) -> Self {
         let mut edge_items = Vec::with_capacity(graph.edges.len());
