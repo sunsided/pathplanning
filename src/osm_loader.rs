@@ -2,8 +2,9 @@ use crate::graph::{
     DecorationKind, DecorationLayer, DecorationShape, GraphEdge, GraphNode, RoadClass, RoadGraph,
 };
 use crate::projection::latlon_to_world;
-use osmpbfreader::{OsmObj, OsmPbfReader};
+use osmpbf::{Element, ElementReader};
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 /// Routable highway tags (car/vehicle profile).
 const ROUTABLE_HIGHWAYS: &[&str] = &[
@@ -25,8 +26,6 @@ const ROUTABLE_HIGHWAYS: &[&str] = &[
 ];
 
 /// Highway tags to drop entirely (not routable, not decoration).
-/// Kept for documentation; the PBF filter implicitly drops these by only
-/// accepting `ROUTABLE_HIGHWAYS` and specific decoration cases.
 #[allow(dead_code)]
 const DROPPED_HIGHWAYS: &[&str] = &[
     "footway",
@@ -65,6 +64,15 @@ const SERVICE_REJECT: &[&str] = &["parking_aisle", "driveway", "emergency_access
 /// Access values that disqualify a way from being routable.
 const ACCESS_REJECT: &[&str] = &["no", "private", "customers", "delivery"];
 
+struct WayRecord {
+    tags: Vec<(String, String)>,
+    node_refs: Vec<i64>,
+}
+
+fn find_tag<'a>(tags: &'a [(String, String)], key: &str) -> Option<&'a str> {
+    tags.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+}
+
 fn euclidean_dist(a: [f64; 2], b: [f64; 2]) -> f64 {
     let dx = a[0] - b[0];
     let dy = a[1] - b[1];
@@ -75,81 +83,144 @@ fn is_routable_highway(hw: &str) -> bool {
     ROUTABLE_HIGHWAYS.contains(&hw)
 }
 
-fn is_rejected_access(tags: &osmpbfreader::Tags) -> bool {
-    tags.get("access")
-        .map(|v| ACCESS_REJECT.contains(&v.as_str()))
+fn is_rejected_access(tags: &[(String, String)]) -> bool {
+    find_tag(tags, "access")
+        .map(|v| ACCESS_REJECT.contains(&v))
         .unwrap_or(false)
 }
 
-fn is_motor_barred(tags: &osmpbfreader::Tags) -> bool {
-    tags.get("motor_vehicle")
-        .map(|v| v == "no")
-        .unwrap_or(false)
-        || tags.get("vehicle").map(|v| v == "no").unwrap_or(false)
+fn is_motor_barred(tags: &[(String, String)]) -> bool {
+    find_tag(tags, "motor_vehicle") == Some("no") || find_tag(tags, "vehicle") == Some("no")
 }
 
-fn is_rejected_service(tags: &osmpbfreader::Tags) -> bool {
-    tags.get("service")
-        .map(|v| SERVICE_REJECT.contains(&v.as_str()))
+fn is_rejected_service(tags: &[(String, String)]) -> bool {
+    find_tag(tags, "service")
+        .map(|v| SERVICE_REJECT.contains(&v))
         .unwrap_or(false)
+}
+
+fn way_passes_filter<'a>(tags: impl Iterator<Item = (&'a str, &'a str)>) -> bool {
+    let mut highway = None;
+    let mut has_building = false;
+    let mut landuse = None;
+    let mut area = false;
+    for (k, v) in tags {
+        match k {
+            "highway" => highway = Some(v),
+            "building" => has_building = true,
+            "landuse" => landuse = Some(v),
+            "area" if v == "yes" => area = true,
+            _ => {}
+        }
+    }
+    if let Some(hw) = highway {
+        if is_routable_highway(hw) {
+            return true;
+        }
+        if hw == "pedestrian" && area {
+            return true;
+        }
+        return false;
+    }
+    if has_building {
+        return true;
+    }
+    if let Some(lu) = landuse {
+        return LANDUSE_KEEP.contains(&lu);
+    }
+    false
 }
 
 pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
     log::info!("Loading OSM PBF from: {}", path);
 
-    let file = std::fs::File::open(path)?;
-    // SAFETY: map file is read-only and not modified while mapped.
-    let mmap = unsafe { memmap2::Mmap::map(&file)? };
-    let cursor = std::io::Cursor::new(&mmap[..]);
-    let mut pbf = OsmPbfReader::new(cursor);
-
-    // Collect ways we care about: routable highways, buildings, landuse, pedestrian areas.
-    let objs = pbf.get_objs_and_deps(|obj| match obj {
-        OsmObj::Way(w) => {
-            if let Some(hw) = w.tags.get("highway") {
-                if is_routable_highway(hw.as_str()) {
-                    return true;
+    // Pass 1: collect matching ways + all referenced node IDs
+    let reader = ElementReader::from_path(path)?;
+    let (ways, all_node_refs) = reader.par_map_reduce(
+        |element| {
+            if let Element::Way(way) = element {
+                let borrowed_tags: Vec<(&str, &str)> = way.tags().collect();
+                if !way_passes_filter(borrowed_tags.iter().map(|&(k, v)| (k, v))) {
+                    return (Vec::new(), Vec::new());
                 }
-                if hw == "pedestrian" && w.tags.get("area").map(|s| s.as_str()) == Some("yes") {
-                    return true;
-                }
-                return false;
+                let node_refs: Vec<i64> = way.refs().collect();
+                let tags: Vec<(String, String)> = borrowed_tags
+                    .into_iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect();
+                (
+                    vec![WayRecord {
+                        tags,
+                        node_refs: node_refs.clone(),
+                    }],
+                    node_refs,
+                )
+            } else {
+                (Vec::new(), Vec::new())
             }
-            if w.tags.contains_key("building") {
-                return true;
-            }
-            if let Some(lu) = w.tags.get("landuse") {
-                return LANDUSE_KEEP.contains(&lu.as_str());
-            }
-            false
-        }
-        _ => false,
-    })?;
+        },
+        || (Vec::new(), Vec::new()),
+        |mut a, b| {
+            a.0.extend(b.0);
+            a.1.extend(b.1);
+            a
+        },
+    )?;
 
-    log::info!("Loaded {} OSM objects", objs.len());
+    log::info!("Loaded {} ways", ways.len());
 
-    // Pass 1: index ALL nodes from the dependency set.
-    // Decoration-only nodes are included; their adjacency slots stay empty.
-    // Simpler first cut — revisit with separate coord table if memory is a concern.
+    // Dedupe node refs into a HashSet
+    let referenced_nodes: HashSet<i64> = all_node_refs.into_iter().collect();
+
+    // Pass 2: collect coords for referenced node IDs
+    let reader = ElementReader::from_path(path)?;
+    let nodes_flat = reader.par_map_reduce(
+        |element| {
+            let (id, lat, lon) = match &element {
+                Element::Node(n) => (n.id(), n.lat(), n.lon()),
+                Element::DenseNode(n) => (n.id(), n.lat(), n.lon()),
+                _ => return Vec::new(),
+            };
+            if referenced_nodes.contains(&id) {
+                vec![(id, lat, lon)]
+            } else {
+                Vec::new()
+            }
+        },
+        Vec::new,
+        |mut a, b| {
+            a.extend(b);
+            a
+        },
+    )?;
+
+    log::info!("Loaded {} referenced nodes", nodes_flat.len());
+
+    // Build coord map
+    let coord_map: HashMap<i64, (f64, f64)> = nodes_flat
+        .into_iter()
+        .map(|(id, lat, lon)| (id, (lat, lon)))
+        .collect();
+
+    // Graph construction
     let mut osm_node_to_graph: HashMap<i64, usize> = HashMap::new();
     let mut graph = RoadGraph::new();
 
-    for obj in objs.values() {
-        if let OsmObj::Node(node) = obj {
-            let osm_id = node.id.0;
+    for way in &ways {
+        for &osm_id in &way.node_refs {
             if osm_node_to_graph.contains_key(&osm_id) {
                 continue;
             }
-            let lat = node.lat();
-            let lon = node.lon();
-            let world = latlon_to_world(lat, lon);
-            let graph_id = graph.nodes.len();
-            osm_node_to_graph.insert(osm_id, graph_id);
-            graph.nodes.push(GraphNode {
-                id: graph_id,
-                world_pos: world,
-                lat_lon: [lat, lon],
-            });
+            if let Some(&(lat, lon)) = coord_map.get(&osm_id) {
+                let world = latlon_to_world(lat, lon);
+                let graph_id = graph.nodes.len();
+                osm_node_to_graph.insert(osm_id, graph_id);
+                graph.nodes.push(GraphNode {
+                    id: graph_id,
+                    world_pos: world,
+                    lat_lon: [lat, lon],
+                });
+            }
         }
     }
 
@@ -158,132 +229,120 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
     // Pre-allocate adjacency list.
     graph.adjacency = vec![Vec::new(); graph.nodes.len()];
 
-    // Pass 2: process ways — routable edges and decoration shapes.
-    for obj in objs.values() {
-        if let OsmObj::Way(way) = obj {
-            // --- Routable highway ---
-            if let Some(hw_tag) = way.tags.get("highway") {
-                if is_routable_highway(hw_tag.as_str()) {
-                    // Apply rejection rules
-                    let is_area = way.tags.get("area").map(|s| s.as_str()) == Some("yes");
-                    if is_area
-                        || is_rejected_access(&way.tags)
-                        || is_motor_barred(&way.tags)
-                        || is_rejected_service(&way.tags)
-                    {
-                        // Demote rejected routable candidates to decoration.
-                        build_decoration_shape(
-                            way,
-                            &osm_node_to_graph,
-                            &graph.nodes,
-                            &mut graph.decorations,
-                            DecorationKind::ServiceArea,
-                        );
-                        continue;
-                    }
-
-                    let road_class = RoadClass::from_tag(hw_tag.as_str());
-
-                    // Determine one-way status.
-                    let oneway_tag = way.tags.get("oneway").map(|s| s.as_str());
-                    let junction_tag = way.tags.get("junction").map(|s| s.as_str());
-                    let is_one_way = oneway_tag == Some("yes")
-                        || oneway_tag == Some("1")
-                        || oneway_tag == Some("true")
-                        || junction_tag == Some("roundabout");
-
-                    // Collect valid node ids for this way.
-                    let node_ids: Vec<usize> = way
-                        .nodes
-                        .iter()
-                        .filter_map(|nid| osm_node_to_graph.get(&nid.0).copied())
-                        .collect();
-
-                    if node_ids.len() < 2 {
-                        continue;
-                    }
-
-                    // Collect world positions.
-                    let positions: Vec<[f64; 2]> = node_ids
-                        .iter()
-                        .map(|&gid| graph.nodes[gid].world_pos)
-                        .collect();
-
-                    // Add one edge per consecutive pair.
-                    for i in 0..(node_ids.len() - 1) {
-                        let from = node_ids[i];
-                        let to = node_ids[i + 1];
-                        let polyline = vec![positions[i], positions[i + 1]];
-                        let weight = euclidean_dist(positions[i], positions[i + 1]);
-
-                        // Forward edge.
-                        let fwd_idx = graph.edges.len();
-                        graph.edges.push(GraphEdge {
-                            from,
-                            to,
-                            weight_meters: weight,
-                            polyline_world: polyline.clone(),
-                            road_class,
-                            one_way: is_one_way,
-                        });
-                        graph.adjacency[from].push(fwd_idx);
-
-                        // Reverse edge (if bidirectional).
-                        if !is_one_way {
-                            let rev_idx = graph.edges.len();
-                            graph.edges.push(GraphEdge {
-                                from: to,
-                                to: from,
-                                weight_meters: weight,
-                                polyline_world: {
-                                    let mut rev = polyline.clone();
-                                    rev.reverse();
-                                    rev
-                                },
-                                road_class,
-                                one_way: false,
-                            });
-                            graph.adjacency[to].push(rev_idx);
-                        }
-                    }
-                    continue;
-                }
-            }
-
-            // --- Decoration geometry ---
-            if way.tags.contains_key("building") {
-                build_decoration_shape(
-                    way,
-                    &osm_node_to_graph,
-                    &graph.nodes,
-                    &mut graph.decorations,
-                    DecorationKind::Building,
-                );
-                continue;
-            }
-            if let Some(lu) = way.tags.get("landuse") {
-                if LANDUSE_KEEP.contains(&lu.as_str()) {
+    // Process ways — routable edges and decoration shapes.
+    for way in &ways {
+        if let Some(hw_tag) = find_tag(&way.tags, "highway") {
+            if is_routable_highway(hw_tag) {
+                let is_area = find_tag(&way.tags, "area") == Some("yes");
+                if is_area
+                    || is_rejected_access(&way.tags)
+                    || is_motor_barred(&way.tags)
+                    || is_rejected_service(&way.tags)
+                {
                     build_decoration_shape(
-                        way,
+                        &way.node_refs,
                         &osm_node_to_graph,
                         &graph.nodes,
                         &mut graph.decorations,
-                        DecorationKind::Landuse,
+                        DecorationKind::ServiceArea,
                     );
                     continue;
                 }
+
+                let road_class = RoadClass::from_tag(hw_tag);
+
+                let oneway_tag = find_tag(&way.tags, "oneway");
+                let junction_tag = find_tag(&way.tags, "junction");
+                let is_one_way = oneway_tag == Some("yes")
+                    || oneway_tag == Some("1")
+                    || oneway_tag == Some("true")
+                    || junction_tag == Some("roundabout");
+
+                let node_ids: Vec<usize> = way
+                    .node_refs
+                    .iter()
+                    .filter_map(|nid| osm_node_to_graph.get(nid).copied())
+                    .collect();
+
+                if node_ids.len() < 2 {
+                    continue;
+                }
+
+                let positions: Vec<[f64; 2]> = node_ids
+                    .iter()
+                    .map(|&gid| graph.nodes[gid].world_pos)
+                    .collect();
+
+                for i in 0..(node_ids.len() - 1) {
+                    let from = node_ids[i];
+                    let to = node_ids[i + 1];
+                    let polyline = vec![positions[i], positions[i + 1]];
+                    let weight = euclidean_dist(positions[i], positions[i + 1]);
+
+                    let fwd_idx = graph.edges.len();
+                    graph.edges.push(GraphEdge {
+                        from,
+                        to,
+                        weight_meters: weight,
+                        polyline_world: polyline.clone(),
+                        road_class,
+                        one_way: is_one_way,
+                    });
+                    graph.adjacency[from].push(fwd_idx);
+
+                    if !is_one_way {
+                        let rev_idx = graph.edges.len();
+                        graph.edges.push(GraphEdge {
+                            from: to,
+                            to: from,
+                            weight_meters: weight,
+                            polyline_world: {
+                                let mut rev = polyline.clone();
+                                rev.reverse();
+                                rev
+                            },
+                            road_class,
+                            one_way: false,
+                        });
+                        graph.adjacency[to].push(rev_idx);
+                    }
+                }
+                continue;
             }
-            if way.tags.get("highway").map(|s| s.as_str()) == Some("pedestrian")
-                && way.tags.get("area").map(|s| s.as_str()) == Some("yes")
-            {
+        }
+
+        if find_tag(&way.tags, "building").is_some() {
+            build_decoration_shape(
+                &way.node_refs,
+                &osm_node_to_graph,
+                &graph.nodes,
+                &mut graph.decorations,
+                DecorationKind::Building,
+            );
+            continue;
+        }
+        if let Some(lu) = find_tag(&way.tags, "landuse") {
+            if LANDUSE_KEEP.contains(&lu) {
                 build_decoration_shape(
-                    way,
+                    &way.node_refs,
                     &osm_node_to_graph,
                     &graph.nodes,
                     &mut graph.decorations,
-                    DecorationKind::PedestrianArea,
+                    DecorationKind::Landuse,
                 );
+                continue;
             }
+        }
+        if find_tag(&way.tags, "highway") == Some("pedestrian")
+            && find_tag(&way.tags, "area") == Some("yes")
+        {
+            build_decoration_shape(
+                &way.node_refs,
+                &osm_node_to_graph,
+                &graph.nodes,
+                &mut graph.decorations,
+                DecorationKind::PedestrianArea,
+            );
         }
     }
 
@@ -311,15 +370,15 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
 }
 
 fn build_decoration_shape(
-    way: &osmpbfreader::Way,
+    node_refs: &[i64],
     osm_node_to_graph: &HashMap<i64, usize>,
     graph_nodes: &[GraphNode],
     decorations: &mut DecorationLayer,
     kind: DecorationKind,
 ) {
-    let mut polyline_world: Vec<[f64; 2]> = Vec::with_capacity(way.nodes.len());
-    for nid in &way.nodes {
-        if let Some(&gid) = osm_node_to_graph.get(&nid.0) {
+    let mut polyline_world: Vec<[f64; 2]> = Vec::with_capacity(node_refs.len());
+    for &nid in node_refs {
+        if let Some(&gid) = osm_node_to_graph.get(&nid) {
             if gid < graph_nodes.len() {
                 polyline_world.push(graph_nodes[gid].world_pos);
             }
@@ -329,8 +388,7 @@ fn build_decoration_shape(
         return;
     }
 
-    // Closed if first and last OSM node ids are the same.
-    let closed = way.nodes.first() == way.nodes.last();
+    let closed = node_refs.first() == node_refs.last();
 
     decorations.shapes.push(DecorationShape {
         kind,
