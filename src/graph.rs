@@ -1,3 +1,6 @@
+/// Classification of routable road edges.
+/// `Path` and `Other` variants are kept for exhaustive matching in the renderer,
+/// but are no longer produced by the OSM loader (car-only profile).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoadClass {
     Motorway,
@@ -6,7 +9,9 @@ pub enum RoadClass {
     Tertiary,
     Residential,
     Service,
+    /// Unused by the car-only loader; kept for renderer exhaustiveness.
     Path,
+    /// Unused by the car-only loader; kept for renderer exhaustiveness.
     Other,
 }
 
@@ -57,12 +62,37 @@ pub struct GraphEdge {
     pub one_way: bool,
 }
 
+/// Decoration kinds for visual-context-only geometry (never routable).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecorationKind {
+    Building,
+    Landuse,
+    PedestrianArea,
+    ServiceArea,
+}
+
+/// A single decoration shape — either a closed polygon or an open polyline.
+#[derive(Debug, Clone)]
+pub struct DecorationShape {
+    pub kind: DecorationKind,
+    pub polyline_world: Vec<[f64; 2]>,
+    pub closed: bool,
+}
+
+/// Collection of all non-routable decoration geometry.
+#[derive(Debug, Default)]
+pub struct DecorationLayer {
+    pub shapes: Vec<DecorationShape>,
+}
+
 #[derive(Debug, Default)]
 pub struct RoadGraph {
     pub nodes: Vec<GraphNode>,
     pub edges: Vec<GraphEdge>,
     /// adjacency[node_id] = list of edge indices where edge.from == node_id
     pub adjacency: Vec<Vec<usize>>,
+    /// Non-routable visual context (buildings, landuse, pedestrian plazas).
+    pub decorations: DecorationLayer,
 }
 
 impl RoadGraph {

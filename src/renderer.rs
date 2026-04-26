@@ -1,6 +1,6 @@
 use crate::astar::{PlannerState, PlannerStatus};
 use crate::camera::Camera;
-use crate::graph::{RoadClass, RoadGraph};
+use crate::graph::{DecorationKind, DecorationLayer, RoadClass, RoadGraph};
 use crate::input::InputState;
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
@@ -122,6 +122,33 @@ fn fill_circle(pixmap: &mut Pixmap, cx: f32, cy: f32, radius: f32, r: u8, g: u8,
     }
 }
 
+fn fill_polygon(
+    pixmap: &mut Pixmap,
+    points: &[[f64; 2]],
+    camera: &Camera,
+    r: u8,
+    g: u8,
+    b: u8,
+    a: u8,
+) {
+    if points.len() < 2 {
+        return;
+    }
+    let mut pb = PathBuilder::new();
+    let sp0 = camera.world_to_screen(points[0]);
+    pb.move_to(sp0[0], sp0[1]);
+    for &wp in &points[1..] {
+        let sp = camera.world_to_screen(wp);
+        pb.line_to(sp[0], sp[1]);
+    }
+    pb.close();
+    if let Some(path) = pb.finish() {
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(r, g, b, a);
+        pixmap.fill_path(&path, &paint, FillRule::EvenOdd, Transform::identity(), None);
+    }
+}
+
 fn stroke_polyline(
     pixmap: &mut Pixmap,
     points: &[[f64; 2]],
@@ -167,6 +194,9 @@ pub fn render(
     // Background.
     pixmap.fill(Color::from_rgba8(10, 14, 26, 255));
 
+    // Layer 0: decoration fills (buildings, landuse, plazas) — behind everything.
+    draw_decorations(&graph.decorations, camera, pixmap);
+
     // Layer 1: all road edges (static).
     draw_all_edges(graph, camera, pixmap);
 
@@ -191,6 +221,35 @@ pub fn render(
 
     // Layer 7: debug overlay.
     draw_debug(graph, camera, planner, pixmap);
+}
+
+fn draw_decorations(layer: &DecorationLayer, camera: &Camera, pixmap: &mut Pixmap) {
+    if camera.zoom < 0.3 {
+        return;
+    }
+    let skip_buildings = camera.zoom < 1.0;
+
+    for shape in &layer.shapes {
+        if skip_buildings && shape.kind == DecorationKind::Building {
+            continue;
+        }
+        let (r, g, b, a) = match shape.kind {
+            DecorationKind::Building => (26, 31, 46, 180),
+            DecorationKind::Landuse => (20, 24, 34, 160),
+            DecorationKind::PedestrianArea => (28, 30, 40, 150),
+            DecorationKind::ServiceArea => (20, 24, 34, 140),
+        };
+
+        if shape.closed {
+            fill_polygon(pixmap, &shape.polyline_world, camera, r, g, b, a);
+            // Outline for buildings.
+            if shape.kind == DecorationKind::Building {
+                stroke_polyline(pixmap, &shape.polyline_world, camera, 36, 42, 58, 200, 0.8);
+            }
+        } else {
+            stroke_polyline(pixmap, &shape.polyline_world, camera, r, g, b, a, 0.8);
+        }
+    }
 }
 
 fn draw_all_edges(graph: &RoadGraph, camera: &Camera, pixmap: &mut Pixmap) {
@@ -304,9 +363,10 @@ fn draw_debug(graph: &RoadGraph, camera: &Camera, planner: &PlannerState, pixmap
         PlannerStatus::Done => "DONE",
     };
 
-    let lines: [String; 6] = [
+    let lines: [String; 7] = [
         format!("NODES: {}", graph.node_count()),
         format!("EDGES: {}", graph.edge_count()),
+        format!("DECOR: {}", graph.decorations.shapes.len()),
         format!("ZOOM: {:.4}", camera.zoom),
         format!("STATUS: {}", status_str),
         format!("EXPANDED: {}", planner.expanded_count),
