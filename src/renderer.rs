@@ -1,7 +1,8 @@
 use crate::astar::{PlannerState, PlannerStatus};
 use crate::camera::Camera;
-use crate::graph::{DecorationKind, DecorationLayer, RoadClass, RoadGraph};
+use crate::graph::{DecorationKind, RoadClass, RoadGraph};
 use crate::input::InputState;
+use crate::lod::LodPyramid;
 use crate::view_index::ViewportIndex;
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
@@ -194,6 +195,7 @@ pub fn render(
     planner: &PlannerState,
     input_state: &InputState,
     view_index: &impl ViewportIndex,
+    pyramid: &LodPyramid,
     pixmap: &mut Pixmap,
 ) {
     // Background.
@@ -201,22 +203,13 @@ pub fn render(
 
     let (vmin_x, vmin_y, vmax_x, vmax_y) = camera.visible_world_aabb(32.0);
 
+    let lod = pyramid.pick(camera.zoom);
+
     // Layer 0: decoration fills (buildings, landuse, plazas) — behind everything.
-    draw_decorations(
-        &graph.decorations,
-        camera,
-        view_index,
-        vmin_x,
-        vmin_y,
-        vmax_x,
-        vmax_y,
-        pixmap,
-    );
+    draw_decorations_lod(lod, camera, vmin_x, vmin_y, vmax_x, vmax_y, pixmap);
 
     // Layer 1: all road edges (static).
-    draw_all_edges(
-        graph, camera, view_index, vmin_x, vmin_y, vmax_x, vmax_y, pixmap,
-    );
+    draw_all_edges_lod(lod, camera, vmin_x, vmin_y, vmax_x, vmax_y, pixmap);
 
     // Layer 2: explored (closed-set) edges.
     draw_explored_edges(
@@ -264,49 +257,53 @@ pub fn render(
     draw_markers(camera, input_state, pixmap);
 
     // Layer 7: debug overlay.
-    draw_debug(graph, camera, planner, pixmap);
+    draw_debug(graph, camera, planner, pyramid, pixmap);
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_decorations(
-    layer: &DecorationLayer,
+fn draw_decorations_lod(
+    lod: &crate::lod::LodLevel,
     camera: &Camera,
-    view_index: &impl ViewportIndex,
     vmin_x: f64,
     vmin_y: f64,
     vmax_x: f64,
     vmax_y: f64,
     pixmap: &mut Pixmap,
 ) {
-    if camera.zoom < 0.3 {
+    if lod.decorations.is_empty() {
         return;
     }
-    let skip_buildings = camera.zoom < 1.0;
 
-    let visible_ids = view_index.decorations_in(vmin_x, vmin_y, vmax_x, vmax_y);
-    for &idx in &visible_ids {
-        let shape = &layer.shapes[idx];
-        if skip_buildings && shape.kind == DecorationKind::Building {
+    let zoom = camera.zoom;
+    for decor in &lod.decorations {
+        let a = &decor.aabb;
+        let aw = (a[2] - a[0]) * zoom;
+        let ah = (a[3] - a[1]) * zoom;
+        if aw.max(ah) < 0.5 {
             continue;
         }
-        let (r, g, b, a) = match shape.kind {
+        if !aabb_in_view(a, vmin_x, vmin_y, vmax_x, vmax_y) {
+            continue;
+        }
+
+        let (r, g, b, a) = match decor.kind {
             DecorationKind::Building => (26, 31, 46, 180),
             DecorationKind::Landuse => (20, 24, 34, 160),
             DecorationKind::PedestrianArea => (28, 30, 40, 150),
             DecorationKind::ServiceArea => (20, 24, 34, 140),
         };
 
-        if shape.closed {
+        if decor.closed {
             fill_polygon(
                 pixmap,
-                &shape.polyline_world,
+                &decor.polyline_world,
                 camera,
                 ColorRGBA { r, g, b, a },
             );
-            if shape.kind == DecorationKind::Building {
+            if decor.kind == DecorationKind::Building {
                 stroke_polyline(
                     pixmap,
-                    &shape.polyline_world,
+                    &decor.polyline_world,
                     camera,
                     ColorRGBA {
                         r: 36,
@@ -320,7 +317,7 @@ fn draw_decorations(
         } else {
             stroke_polyline(
                 pixmap,
-                &shape.polyline_world,
+                &decor.polyline_world,
                 camera,
                 ColorRGBA { r, g, b, a },
                 0.8,
@@ -330,19 +327,27 @@ fn draw_decorations(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_all_edges(
-    graph: &RoadGraph,
+fn draw_all_edges_lod(
+    lod: &crate::lod::LodLevel,
     camera: &Camera,
-    view_index: &impl ViewportIndex,
     vmin_x: f64,
     vmin_y: f64,
     vmax_x: f64,
     vmax_y: f64,
     pixmap: &mut Pixmap,
 ) {
-    let visible_ids = view_index.edges_in(vmin_x, vmin_y, vmax_x, vmax_y);
-    for &idx in &visible_ids {
-        let edge = &graph.edges[idx];
+    let zoom = camera.zoom;
+    for edge in &lod.edges {
+        let a = &edge.aabb;
+        let aw = (a[2] - a[0]) * zoom;
+        let ah = (a[3] - a[1]) * zoom;
+        if aw.max(ah) < 0.5 {
+            continue;
+        }
+        if !aabb_in_view(a, vmin_x, vmin_y, vmax_x, vmax_y) {
+            continue;
+        }
+
         let width = edge.road_class.stroke_width();
         let (er, eg, eb) = match edge.road_class {
             RoadClass::Motorway => (40, 60, 100),
@@ -514,7 +519,17 @@ fn draw_markers(camera: &Camera, input_state: &InputState, pixmap: &mut Pixmap) 
     }
 }
 
-fn draw_debug(graph: &RoadGraph, camera: &Camera, planner: &PlannerState, pixmap: &mut Pixmap) {
+fn aabb_in_view(a: &[f64; 4], vmin_x: f64, vmin_y: f64, vmax_x: f64, vmax_y: f64) -> bool {
+    a[0] <= vmax_x && a[2] >= vmin_x && a[1] <= vmax_y && a[3] >= vmin_y
+}
+
+fn draw_debug(
+    graph: &RoadGraph,
+    camera: &Camera,
+    planner: &PlannerState,
+    pyramid: &LodPyramid,
+    pixmap: &mut Pixmap,
+) {
     let mut y = 8i32;
     let x = 8i32;
 
@@ -525,11 +540,23 @@ fn draw_debug(graph: &RoadGraph, camera: &Camera, planner: &PlannerState, pixmap
         PlannerStatus::Done => "DONE",
     };
 
-    let lines: [String; 7] = [
+    let lod = pyramid.pick(camera.zoom);
+    let lod_label = if camera.zoom >= 0.5 {
+        "L0"
+    } else if camera.zoom >= 0.05 {
+        "L1"
+    } else {
+        "L2"
+    };
+
+    let lines: Vec<String> = vec![
         format!("NODES: {}", graph.node_count()),
         format!("EDGES: {}", graph.edge_count()),
         format!("DECOR: {}", graph.decorations.shapes.len()),
         format!("ZOOM: {:.4}", camera.zoom),
+        format!("LOD: {}", lod_label),
+        format!("EDGES_LOD: {}", lod.edges.len()),
+        format!("DECOR_LOD: {}", lod.decorations.len()),
         format!("STATUS: {}", status_str),
         format!("EXPANDED: {}", planner.expanded_count),
         format!("PATH: {:.0}M", planner.locked_path_dist),

@@ -17,6 +17,7 @@ pub(crate) const MARGIN_FRACTION: f64 = 0.01;
 
 pub trait ViewportIndex {
     fn edges_in(&self, min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Vec<usize>;
+    #[allow(dead_code)]
     fn decorations_in(&self, min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Vec<usize>;
 }
 
@@ -43,6 +44,7 @@ impl RTreeObject for RStarEdge {
 }
 
 struct RStarDecor {
+    #[allow(dead_code)]
     id: usize,
     envelope: RStarAABB<[f64; 2]>,
 }
@@ -56,8 +58,10 @@ impl RTreeObject for RStarDecor {
 
 pub struct RStarViewIndex {
     edge_tree: RTree<RStarEdge>,
+    #[allow(dead_code)]
     decor_tree: RTree<RStarDecor>,
     edge_aabbs: Vec<[f64; 4]>,
+    #[allow(dead_code)]
     decor_aabbs: Vec<[f64; 4]>,
 }
 
@@ -239,6 +243,48 @@ impl RStarViewIndex {
             });
         }
 
+        Self {
+            edge_tree: RTree::bulk_load(edge_items),
+            decor_tree: RTree::bulk_load(decor_items),
+            edge_aabbs,
+            decor_aabbs,
+        }
+    }
+
+    pub fn build_from_raw_aabbs(edge_aabbs: Vec<[f64; 4]>, edge_ids: Vec<usize>) -> Self {
+        let mut edge_items = Vec::with_capacity(edge_aabbs.len());
+        for (i, aabb) in edge_aabbs.iter().enumerate() {
+            let id = if i < edge_ids.len() { edge_ids[i] } else { i };
+            edge_items.push(RStarEdge {
+                id,
+                envelope: RStarAABB::from_corners([aabb[0], aabb[1]], [aabb[2], aabb[3]]),
+            });
+        }
+        let empty_decor_aabbs: Vec<[f64; 4]> = Vec::new();
+        Self {
+            edge_tree: RTree::bulk_load(edge_items),
+            decor_tree: RTree::bulk_load(Vec::new()),
+            edge_aabbs,
+            decor_aabbs: empty_decor_aabbs,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn build_from_aabbs(edge_aabbs: Vec<[f64; 4]>, decor_aabbs: Vec<[f64; 4]>) -> Self {
+        let mut edge_items = Vec::with_capacity(edge_aabbs.len());
+        for (i, aabb) in edge_aabbs.iter().enumerate() {
+            edge_items.push(RStarEdge {
+                id: i,
+                envelope: RStarAABB::from_corners([aabb[0], aabb[1]], [aabb[2], aabb[3]]),
+            });
+        }
+        let mut decor_items = Vec::with_capacity(decor_aabbs.len());
+        for (i, aabb) in decor_aabbs.iter().enumerate() {
+            decor_items.push(RStarDecor {
+                id: i,
+                envelope: RStarAABB::from_corners([aabb[0], aabb[1]], [aabb[2], aabb[3]]),
+            });
+        }
         Self {
             edge_tree: RTree::bulk_load(edge_items),
             decor_tree: RTree::bulk_load(decor_items),

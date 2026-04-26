@@ -9,6 +9,7 @@ mod astar;
 mod camera;
 mod graph;
 mod input;
+mod lod;
 mod osm_loader;
 mod projection;
 mod renderer;
@@ -18,6 +19,7 @@ mod view_index;
 use astar::{PlannerState, PlannerStatus};
 use camera::Camera;
 use input::{InputState, Marker, MarkerKind};
+use lod::LodPyramid;
 use spatial_index::SpatialIndex;
 use view_index::RStarViewIndex;
 
@@ -49,6 +51,8 @@ fn main() {
     // Build spatial index.
     let spatial_index = SpatialIndex::build(&graph);
     let view_index = RStarViewIndex::build(&graph);
+    let lod_pyramid = LodPyramid::build(&graph);
+    log::info!("LOD pyramid built");
 
     // Initialise input and planner state.
     let mut input_state = InputState::new();
@@ -120,6 +124,7 @@ fn main() {
                                 &planner,
                                 &input_state,
                                 &view_index,
+                                &lod_pyramid,
                                 &mut pixmap,
                             );
 
