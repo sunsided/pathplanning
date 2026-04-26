@@ -62,9 +62,9 @@ The top-right HUD panel provides clickable menu items to change planner configur
 
 - **PLANNER** section: Select the pathfinding algorithm
 - **COST** section: Select the cost function
-- **HEURISTIC** section: Select the heuristic (greyed out for Dijkstra)
+- **HEURISTIC** section: Select the heuristic (greyed out for Dijkstra et al.)
 - **Random**: Places random start/end markers (same as `R` key)
-- **Swap**: Swaps start and end markers
+- **Swap**: Swaps start and end markers (same as `S` key)
 
 ## Algorithms
 
