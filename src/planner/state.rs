@@ -1,5 +1,6 @@
 use crate::graph::{GraphEdge, RoadGraph};
 use crate::planner::heuristic::Heuristic;
+use crate::planner::rrt::RrtState;
 use ordered_float::NotNan;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
@@ -63,6 +64,7 @@ pub enum Algorithm {
     AStar,
     Dijkstra,
     GreedyBestFirst,
+    Rrt,
 }
 
 impl Algorithm {
@@ -71,6 +73,7 @@ impl Algorithm {
             Algorithm::AStar => "A*",
             Algorithm::Dijkstra => "Dijkstra",
             Algorithm::GreedyBestFirst => "Greedy Best-First",
+            Algorithm::Rrt => "RRT",
         }
     }
 
@@ -79,6 +82,7 @@ impl Algorithm {
             Algorithm::AStar => "A*",
             Algorithm::Dijkstra => "Dijkstra",
             Algorithm::GreedyBestFirst => "Greedy",
+            Algorithm::Rrt => "RRT",
         }
     }
 
@@ -87,13 +91,14 @@ impl Algorithm {
             Algorithm::AStar,
             Algorithm::Dijkstra,
             Algorithm::GreedyBestFirst,
+            Algorithm::Rrt,
         ]
     }
 
     pub fn uses_heuristic(&self) -> bool {
         match self {
             Algorithm::AStar | Algorithm::GreedyBestFirst => true,
-            Algorithm::Dijkstra => false,
+            Algorithm::Dijkstra | Algorithm::Rrt => false,
         }
     }
 }
@@ -129,6 +134,7 @@ pub struct PlannerState {
     pub status: PlannerStatus,
     pub expanded_count: usize,
     pub goal: Option<usize>,
+    pub rrt: Option<RrtState>,
 }
 
 impl PlannerState {
@@ -147,6 +153,7 @@ impl PlannerState {
             status: PlannerStatus::Idle,
             expanded_count: 0,
             goal: None,
+            rrt: None,
         }
     }
 
@@ -163,6 +170,7 @@ impl PlannerState {
         self.status = PlannerStatus::Idle;
         self.expanded_count = 0;
         self.goal = None;
+        self.rrt = None;
     }
 
     pub fn start_search(&mut self, start: usize, goal: usize) {
@@ -194,6 +202,7 @@ impl PlannerState {
             Algorithm::AStar => crate::planner::astar::step_astar(self, graph, n_steps),
             Algorithm::Dijkstra => crate::planner::dijkstra::step_dijkstra(self, graph, n_steps),
             Algorithm::GreedyBestFirst => crate::planner::greedy::step_greedy(self, graph, n_steps),
+            Algorithm::Rrt => crate::planner::rrt::step_rrt(self, graph, n_steps),
         }
     }
 

@@ -2,6 +2,7 @@ pub mod astar;
 pub mod dijkstra;
 pub mod greedy;
 pub mod heuristic;
+pub mod rrt;
 pub mod state;
 
 pub use heuristic::Heuristic;
