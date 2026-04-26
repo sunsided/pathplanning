@@ -1,7 +1,7 @@
-use std::collections::{BinaryHeap, HashMap, HashSet};
-use std::cmp::Reverse;
-use ordered_float::NotNan;
 use crate::graph::RoadGraph;
+use ordered_float::NotNan;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlannerStatus {
@@ -81,7 +81,10 @@ impl PlannerState {
         self.goal = Some(goal);
         self.g_score.insert(start, 0.0);
         let f = NotNan::new(0.0).unwrap();
-        self.open_set.push(HeapEntry { cost: Reverse(f), node_id: start });
+        self.open_set.push(HeapEntry {
+            cost: Reverse(f),
+            node_id: start,
+        });
         self.frontier.insert(start);
         self.status = PlannerStatus::Searching;
     }

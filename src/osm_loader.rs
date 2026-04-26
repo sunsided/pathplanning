@@ -1,16 +1,28 @@
-use std::collections::HashMap;
-use osmpbfreader::{OsmObj, OsmPbfReader};
-use crate::graph::{GraphEdge, GraphNode, RoadGraph, RoadClass};
+use crate::graph::{GraphEdge, GraphNode, RoadClass, RoadGraph};
 use crate::projection::latlon_to_world;
+use osmpbfreader::{OsmObj, OsmPbfReader};
+use std::collections::HashMap;
 
 const HIGHWAY_TAGS: &[&str] = &[
-    "motorway", "motorway_link", "trunk", "trunk_link",
-    "primary", "primary_link",
-    "secondary", "secondary_link",
-    "tertiary", "tertiary_link",
-    "residential", "unclassified", "living_street", "road",
+    "motorway",
+    "motorway_link",
+    "trunk",
+    "trunk_link",
+    "primary",
+    "primary_link",
+    "secondary",
+    "secondary_link",
+    "tertiary",
+    "tertiary_link",
+    "residential",
+    "unclassified",
+    "living_street",
+    "road",
     "service",
-    "path", "footway", "cycleway", "track",
+    "path",
+    "footway",
+    "cycleway",
+    "track",
 ];
 
 fn is_highway(tag: &str) -> bool {

@@ -1,5 +1,5 @@
-use rstar::{RTree, RTreeObject, AABB, PointDistance};
 use crate::graph::RoadGraph;
+use rstar::{PointDistance, RTree, RTreeObject, AABB};
 
 #[derive(Clone)]
 struct NodePoint {
@@ -43,8 +43,6 @@ impl SpatialIndex {
 
     /// Returns the node id of the nearest graph node to the given world position.
     pub fn nearest_node(&self, world_pos: [f64; 2]) -> Option<usize> {
-        self.tree
-            .nearest_neighbor(&world_pos)
-            .map(|p| p.node_id)
+        self.tree.nearest_neighbor(&world_pos).map(|p| p.node_id)
     }
 }

@@ -8,7 +8,12 @@ pub struct Camera {
 
 impl Camera {
     pub fn new(center: [f64; 2], zoom: f64, screen_width: f32, screen_height: f32) -> Self {
-        Self { center, zoom, screen_width, screen_height }
+        Self {
+            center,
+            zoom,
+            screen_width,
+            screen_height,
+        }
     }
 
     /// Create a camera centered on a bounding box with zoom fitting the view.
@@ -19,10 +24,7 @@ impl Camera {
     ) -> Self {
         match bbox {
             Some((min, max)) => {
-                let center = [
-                    (min[0] + max[0]) * 0.5,
-                    (min[1] + max[1]) * 0.5,
-                ];
+                let center = [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5];
                 let span_x = (max[0] - min[0]).max(1.0);
                 let span_y = (max[1] - min[1]).max(1.0);
                 let zoom_x = screen_width as f64 / span_x * 0.85;

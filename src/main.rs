@@ -25,7 +25,7 @@ fn main() {
     // Parse CLI arguments.
     let pbf_path = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "berlin.osm.pbf".to_string());
+        .unwrap_or_else(|| "maps/berlin.osm.pbf".to_string());
 
     // Load graph.
     let graph = match osm_loader::load_graph(&pbf_path) {
@@ -47,10 +47,6 @@ fn main() {
     // Build spatial index.
     let spatial_index = SpatialIndex::build(&graph);
 
-    // Initialise camera.
-    let bbox = graph.bounding_box();
-    let mut camera = Camera::new_from_bbox(bbox, 1280.0, 720.0);
-
     // Initialise input and planner state.
     let mut input_state = InputState::new();
     let mut planner = PlannerState::new();
@@ -66,6 +62,11 @@ fn main() {
             .build(&event_loop)
             .expect("Failed to create window"),
     );
+
+    // Initialise camera with real window size.
+    let bbox = graph.bounding_box();
+    let size = window.inner_size();
+    let mut camera = Camera::new_from_bbox(bbox, size.width as f32, size.height as f32);
 
     let context = softbuffer::Context::new(window.clone()).expect("softbuffer context");
     let mut surface =
@@ -105,19 +106,12 @@ fn main() {
                             }
 
                             // Build pixmap and render.
-                            let mut pixmap =
-                                match tiny_skia::Pixmap::new(width, height) {
-                                    Some(p) => p,
-                                    None => return,
-                                };
+                            let mut pixmap = match tiny_skia::Pixmap::new(width, height) {
+                                Some(p) => p,
+                                None => return,
+                            };
 
-                            renderer::render(
-                                &graph,
-                                &camera,
-                                &planner,
-                                &input_state,
-                                &mut pixmap,
-                            );
+                            renderer::render(&graph, &camera, &planner, &input_state, &mut pixmap);
 
                             // Present to screen via softbuffer.
                             if let (Some(w), Some(h)) =
@@ -130,9 +124,7 @@ fn main() {
                                     // tiny-skia pixel layout: each PremultipliedColorU8
                                     // stores [r, g, b, a] at indices [0..3].
                                     // softbuffer expects 0x00RRGGBB as u32.
-                                    for (dst, src) in
-                                        buf.iter_mut().zip(pixmap.pixels())
-                                    {
+                                    for (dst, src) in buf.iter_mut().zip(pixmap.pixels()) {
                                         *dst = (src.red() as u32) << 16
                                             | (src.green() as u32) << 8
                                             | src.blue() as u32;
@@ -152,9 +144,7 @@ fn main() {
 
                             if input_state.left_button_down {
                                 // Detect drag threshold (5 px).
-                                if !input_state.is_drag
-                                    && input_state.drag_distance() > 5.0
-                                {
+                                if !input_state.is_drag && input_state.drag_distance() > 5.0 {
                                     input_state.is_drag = true;
                                 }
 
@@ -162,38 +152,27 @@ fn main() {
                                     match input_state.dragging {
                                         Some(MarkerKind::Start) => {
                                             let wp = camera.screen_to_world(new_pos);
-                                            if let Some(ref mut m) =
-                                                input_state.start_marker
-                                            {
+                                            if let Some(ref mut m) = input_state.start_marker {
                                                 m.world_pos = wp;
-                                                m.snapped_node =
-                                                    spatial_index.nearest_node(wp);
+                                                m.snapped_node = spatial_index.nearest_node(wp);
                                             }
                                         }
                                         Some(MarkerKind::End) => {
                                             let wp = camera.screen_to_world(new_pos);
-                                            if let Some(ref mut m) =
-                                                input_state.end_marker
-                                            {
+                                            if let Some(ref mut m) = input_state.end_marker {
                                                 m.world_pos = wp;
-                                                m.snapped_node =
-                                                    spatial_index.nearest_node(wp);
+                                                m.snapped_node = spatial_index.nearest_node(wp);
                                             }
                                         }
                                         None => {
                                             // Pan the map.
-                                            if let (
-                                                Some(pan_start),
-                                                Some(pan_center),
-                                            ) = (
+                                            if let (Some(pan_start), Some(pan_center)) = (
                                                 input_state.pan_start,
                                                 input_state.pan_center_start,
                                             ) {
-                                                let dx = (new_pos[0] - pan_start[0])
-                                                    as f64
+                                                let dx = (new_pos[0] - pan_start[0]) as f64
                                                     / camera.zoom;
-                                                let dy = (new_pos[1] - pan_start[1])
-                                                    as f64
+                                                let dy = (new_pos[1] - pan_start[1]) as f64
                                                     / camera.zoom;
                                                 camera.center =
                                                     [pan_center[0] - dx, pan_center[1] + dy];
@@ -228,8 +207,7 @@ fn main() {
                                         } else {
                                             // Start pan.
                                             input_state.pan_start = Some(screen_pos);
-                                            input_state.pan_center_start =
-                                                Some(camera.center);
+                                            input_state.pan_center_start = Some(camera.center);
                                         }
                                     }
                                     ElementState::Released => {
@@ -245,10 +223,11 @@ fn main() {
                                             input_state.dragging = None;
                                         } else if !input_state.is_drag {
                                             // It was a plain click → place marker.
+                                            let click_pos = input_state.press_pos;
                                             place_marker(
                                                 &mut input_state,
                                                 &mut planner,
-                                                screen_pos,
+                                                click_pos,
                                                 &camera,
                                                 &spatial_index,
                                             );
@@ -320,7 +299,10 @@ fn place_marker(
 ) {
     let world_pos = camera.screen_to_world(screen_pos);
     let snapped = spatial_index.nearest_node(world_pos);
-    let marker = Marker { world_pos, snapped_node: snapped };
+    let marker = Marker {
+        world_pos,
+        snapped_node: snapped,
+    };
 
     match (&input_state.start_marker, &input_state.end_marker) {
         (None, _) => {
@@ -396,10 +378,7 @@ fn try_start_search(input_state: &mut InputState, planner: &mut PlannerState) {
         .start_marker
         .as_ref()
         .and_then(|m| m.snapped_node);
-    let end_node = input_state
-        .end_marker
-        .as_ref()
-        .and_then(|m| m.snapped_node);
+    let end_node = input_state.end_marker.as_ref().and_then(|m| m.snapped_node);
 
     if let (Some(s), Some(e)) = (start_node, end_node) {
         if s != e {

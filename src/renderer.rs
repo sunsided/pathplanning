@@ -1,8 +1,8 @@
-use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 use crate::astar::{PlannerState, PlannerStatus};
 use crate::camera::Camera;
-use crate::graph::{RoadGraph, RoadClass};
+use crate::graph::{RoadClass, RoadGraph};
 use crate::input::InputState;
+use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
 // ---------------------------------------------------------------------------
 // Minimal 8×8 bitmap font (row-major, MSB = leftmost pixel).
@@ -112,7 +112,13 @@ fn fill_circle(pixmap: &mut Pixmap, cx: f32, cy: f32, radius: f32, r: u8, g: u8,
     if let Some(path) = circle_path(cx, cy, radius) {
         let mut paint = Paint::default();
         paint.set_color_rgba8(r, g, b, a);
-        pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+        pixmap.fill_path(
+            &path,
+            &paint,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
     }
 }
 
@@ -139,7 +145,10 @@ fn stroke_polyline(
     if let Some(path) = pb.finish() {
         let mut paint = Paint::default();
         paint.set_color_rgba8(r, g, b, a);
-        let stroke = Stroke { width, ..Default::default() };
+        let stroke = Stroke {
+            width,
+            ..Default::default()
+        };
         pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
     }
 }
@@ -211,7 +220,9 @@ fn draw_explored_edges(
                 pixmap,
                 &edge.polyline_world,
                 camera,
-                30, 77, 122, // #1e4d7a
+                30,
+                77,
+                122, // #1e4d7a
                 180,
                 1.2,
             );
@@ -261,7 +272,10 @@ fn draw_node_path(
     if let Some(path_geom) = pb.finish() {
         let mut paint = Paint::default();
         paint.set_color_rgba8(r, g, b, a);
-        let stroke = Stroke { width, ..Default::default() };
+        let stroke = Stroke {
+            width,
+            ..Default::default()
+        };
         pixmap.stroke_path(&path_geom, &paint, &stroke, Transform::identity(), None);
     }
 }
@@ -279,12 +293,7 @@ fn draw_markers(camera: &Camera, input_state: &InputState, pixmap: &mut Pixmap) 
     }
 }
 
-fn draw_debug(
-    graph: &RoadGraph,
-    camera: &Camera,
-    planner: &PlannerState,
-    pixmap: &mut Pixmap,
-) {
+fn draw_debug(graph: &RoadGraph, camera: &Camera, planner: &PlannerState, pixmap: &mut Pixmap) {
     let mut y = 8i32;
     let x = 8i32;
 
@@ -301,10 +310,7 @@ fn draw_debug(
         format!("ZOOM: {:.4}", camera.zoom),
         format!("STATUS: {}", status_str),
         format!("EXPANDED: {}", planner.expanded_count),
-        format!(
-            "PATH: {:.0}M",
-            planner.locked_path_dist
-        ),
+        format!("PATH: {:.0}M", planner.locked_path_dist),
     ];
 
     for line in &lines {
