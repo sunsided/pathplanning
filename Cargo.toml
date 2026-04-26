@@ -12,7 +12,7 @@ winit = "0.30"
 vello = "0.8"
 pollster = "0.4"
 fast-osmpbf = { git = "https://github.com/sunsided/fast-osmpbf", branch = "feature/memmap", features = ["mmap", "io-hints"] }
-ordered-float = "4"
+ordered-float = "5"
 rstar = "0.12"
 space-partitioning = "0.5.0"
 log = "0.4"
