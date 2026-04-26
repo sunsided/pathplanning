@@ -46,8 +46,14 @@ impl Heuristic {
         }
         let p1 = graph.nodes[from].world_pos;
         let p2 = graph.nodes[to].world_pos;
-        let dx = (p1[0] - p2[0]).abs();
-        let dy = (p1[1] - p2[1]).abs();
+        // world_pos is Web Mercator, which stretches distances by 1/cos(lat).
+        // Scale back by cos(mean_lat) to get ground meters — otherwise the
+        // heuristic overestimates and A* returns suboptimal paths.
+        let mean_lat_rad =
+            0.5 * (graph.nodes[from].lat_lon[0] + graph.nodes[to].lat_lon[0]).to_radians();
+        let scale = mean_lat_rad.cos();
+        let dx = (p1[0] - p2[0]).abs() * scale;
+        let dy = (p1[1] - p2[1]).abs() * scale;
 
         let dist_m = match self {
             Heuristic::Zero => 0.0,
