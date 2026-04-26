@@ -60,6 +60,10 @@ const LANDUSE_KEEP: &[&str] = &[
     "railway",
 ];
 
+/// Waterway values to load as decoration polylines.
+/// `riverbank` here is the (usually closed) polygon form — treated as water area.
+const WATERWAY_KEEP: &[&str] = &["river", "canal", "stream", "drain", "ditch", "riverbank"];
+
 /// Service values that disqualify a way from being routable.
 const SERVICE_REJECT: &[&str] = &["parking_aisle", "driveway", "emergency_access"];
 
@@ -67,8 +71,35 @@ const SERVICE_REJECT: &[&str] = &["parking_aisle", "driveway", "emergency_access
 const ACCESS_REJECT: &[&str] = &["no", "private", "customers", "delivery"];
 
 struct WayRecord {
+    #[allow(dead_code)]
+    id: i64,
     tags: Vec<(String, String)>,
     node_refs: Vec<i64>,
+}
+
+/// A multipolygon relation whose outer rings should be rendered as water.
+struct WaterRelation {
+    /// Member way IDs with role == "outer" (or empty role, which historically
+    /// defaults to outer). Inner rings (islands) are intentionally skipped —
+    /// rendering them correctly would require hole punching in the fill.
+    outer_way_ids: Vec<i64>,
+}
+
+fn is_water_relation_tags(tags: &[(String, String)]) -> bool {
+    let is_multipolygon = find_tag(tags, "type") == Some("multipolygon");
+    if !is_multipolygon {
+        return false;
+    }
+    if find_tag(tags, "natural").is_some_and(|v| v == "water" || v == "wetland") {
+        return true;
+    }
+    if find_tag(tags, "landuse") == Some("reservoir") {
+        return true;
+    }
+    if find_tag(tags, "waterway") == Some("riverbank") {
+        return true;
+    }
+    false
 }
 
 fn find_tag<'a>(tags: &'a [(String, String)], key: &str) -> Option<&'a str> {
@@ -110,12 +141,16 @@ fn way_passes_filter<'a>(tags: impl Iterator<Item = (&'a str, &'a str)>) -> bool
     let mut highway = None;
     let mut building_value: Option<&str> = None;
     let mut landuse = None;
+    let mut natural_val = None;
+    let mut waterway = None;
     let mut area = false;
     for (k, v) in tags {
         match k {
             "highway" => highway = Some(v),
             "building" => building_value = Some(v),
             "landuse" => landuse = Some(v),
+            "natural" => natural_val = Some(v),
+            "waterway" => waterway = Some(v),
             "area" if v == "yes" => area = true,
             _ => {}
         }
@@ -133,7 +168,22 @@ fn way_passes_filter<'a>(tags: impl Iterator<Item = (&'a str, &'a str)>) -> bool
         return true;
     }
     if let Some(lu) = landuse {
-        return LANDUSE_KEEP.contains(&lu);
+        if LANDUSE_KEEP.contains(&lu) {
+            return true;
+        }
+        if lu == "reservoir" {
+            return true;
+        }
+    }
+    if let Some(n) = natural_val {
+        if n == "water" || n == "wetland" {
+            return true;
+        }
+    }
+    if let Some(ww) = waterway {
+        if WATERWAY_KEEP.contains(&ww) {
+            return true;
+        }
     }
     false
 }
@@ -142,7 +192,66 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
     log::info!("Loading OSM PBF from: {}", path);
     let total_start = Instant::now();
 
-    // Pass 1: collect matching ways + all referenced node IDs
+    // Pass 1a: collect water multipolygon relations.
+    let t0 = Instant::now();
+    let reader = OsmReader::from_path(path)?;
+    reader.apply_element_filter(ElementFilter {
+        nodes: false,
+        relations: true,
+        ways: false,
+    });
+    let water_relations: Vec<WaterRelation> = reader
+        .par_blocks()
+        .map(|block| {
+            let mut out: Vec<WaterRelation> = Vec::new();
+            if let ElementBlock::RelationBlock(block) = block {
+                for rel in block.iter() {
+                    let tags: Vec<(String, String)> = rel
+                        .tags()
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect();
+                    if !is_water_relation_tags(&tags) {
+                        continue;
+                    }
+                    let mut outer_way_ids = Vec::new();
+                    for m in rel.members() {
+                        if m.member_type() != fast_osmpbf::MemberType::WAY {
+                            continue;
+                        }
+                        let role = m.role();
+                        // Empty role on multipolygon historically means outer.
+                        if role == "outer" || role.is_empty() {
+                            outer_way_ids.push(m.id());
+                        }
+                    }
+                    if !outer_way_ids.is_empty() {
+                        out.push(WaterRelation { outer_way_ids });
+                    }
+                }
+            }
+            out
+        })
+        .reduce(Vec::new, |mut a, b| {
+            a.extend(b);
+            a
+        });
+
+    let mut relation_member_way_ids: HashSet<i64> = HashSet::new();
+    for rel in &water_relations {
+        for &wid in &rel.outer_way_ids {
+            relation_member_way_ids.insert(wid);
+        }
+    }
+
+    log::info!(
+        "Pass 1a: collected {} water relations ({} member ways) in {:.2?}",
+        water_relations.len(),
+        relation_member_way_ids.len(),
+        t0.elapsed()
+    );
+
+    // Pass 1b: collect matching ways (existing filter) PLUS any way whose ID is
+    // a member of a water relation (even if the way itself is untagged).
     let t0 = Instant::now();
     let reader = OsmReader::from_path(path)?;
     reader.apply_element_filter(ElementFilter {
@@ -151,6 +260,7 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
         ways: true,
     });
 
+    let relation_member_way_ids_ref = &relation_member_way_ids;
     let (ways, all_node_refs): (Vec<WayRecord>, Vec<i64>) = reader
         .par_blocks()
         .map(|block| {
@@ -158,8 +268,11 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
             let mut refs = Vec::new();
             if let ElementBlock::WayBlock(block) = block {
                 for way in block.iter() {
+                    let id = way.id();
                     let borrowed_tags: Vec<(&str, &str)> = way.tags().collect();
-                    if !way_passes_filter(borrowed_tags.iter().copied()) {
+                    let passes_filter = way_passes_filter(borrowed_tags.iter().copied());
+                    let needed_for_relation = relation_member_way_ids_ref.contains(&id);
+                    if !passes_filter && !needed_for_relation {
                         continue;
                     }
                     let node_refs: Vec<i64> = way.node_ids().collect();
@@ -168,7 +281,11 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
                         .map(|(k, v)| (k.to_string(), v.to_string()))
                         .collect();
                     refs.extend_from_slice(&node_refs);
-                    ways.push(WayRecord { tags, node_refs });
+                    ways.push(WayRecord {
+                        id,
+                        tags,
+                        node_refs,
+                    });
                 }
             }
             (ways, refs)
@@ -183,7 +300,7 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
         );
 
     log::info!(
-        "Pass 1: collected {} ways in {:.2?}",
+        "Pass 1b: collected {} ways in {:.2?}",
         ways.len(),
         t0.elapsed()
     );
@@ -397,7 +514,73 @@ pub fn load_graph(path: &str) -> Result<RoadGraph, Box<dyn std::error::Error>> {
                 &mut graph.decorations,
                 DecorationKind::PedestrianArea,
             );
+            continue;
         }
+
+        let mut is_water = false;
+        if let Some(n) = find_tag(&way.tags, "natural") {
+            if n == "water" || n == "wetland" {
+                is_water = true;
+            }
+        }
+        if let Some(lu) = find_tag(&way.tags, "landuse") {
+            if lu == "reservoir" {
+                is_water = true;
+            }
+        }
+        if let Some(ww) = find_tag(&way.tags, "waterway") {
+            if WATERWAY_KEEP.contains(&ww) {
+                is_water = true;
+            }
+        }
+        if is_water {
+            build_decoration_shape(
+                &way.node_refs,
+                &osm_node_to_graph,
+                &graph.nodes,
+                &mut graph.decorations,
+                DecorationKind::Water,
+            );
+        }
+    }
+
+    // Assemble water multipolygon relations into outer-ring decoration shapes.
+    // Each relation may reference several ways that must be stitched together
+    // by matching endpoints to form closed rings. Inner rings (islands) are
+    // skipped — see WaterRelation docstring.
+    if !water_relations.is_empty() {
+        let mut ways_by_id: HashMap<i64, &WayRecord> = HashMap::with_capacity(ways.len());
+        for w in &ways {
+            ways_by_id.insert(w.id, w);
+        }
+
+        let mut ring_count = 0usize;
+        for rel in &water_relations {
+            let mut segments: Vec<Vec<i64>> = Vec::new();
+            for &wid in &rel.outer_way_ids {
+                if let Some(w) = ways_by_id.get(&wid) {
+                    if w.node_refs.len() >= 2 {
+                        segments.push(w.node_refs.clone());
+                    }
+                }
+            }
+            let rings = stitch_rings(&mut segments);
+            for ring in rings {
+                build_decoration_shape(
+                    &ring,
+                    &osm_node_to_graph,
+                    &graph.nodes,
+                    &mut graph.decorations,
+                    DecorationKind::Water,
+                );
+                ring_count += 1;
+            }
+        }
+        log::info!(
+            "Water relations: assembled {} outer ring(s) from {} relation(s)",
+            ring_count,
+            water_relations.len()
+        );
     }
 
     debug_assert!(
@@ -452,4 +635,69 @@ fn build_decoration_shape(
         polyline_world,
         closed,
     });
+}
+
+/// Stitch a set of linestrings (each a sequence of OSM node IDs) into closed
+/// rings by matching endpoints. Consumes `segments` (leaves unused segments
+/// in place). Returns a `Vec` of closed rings (first == last node id).
+///
+/// Greedy endpoint-matching: pick an unused segment, extend by finding any
+/// unused segment that shares its current end node, reverse if necessary,
+/// append (deduping the shared node). Stop when the ring closes or no match
+/// is found. A ring with at least 4 node-ids and first==last is considered
+/// valid; partial/open chains are discarded.
+fn stitch_rings(segments: &mut [Vec<i64>]) -> Vec<Vec<i64>> {
+    let mut rings: Vec<Vec<i64>> = Vec::new();
+    let mut used = vec![false; segments.len()];
+
+    for i in 0..segments.len() {
+        if used[i] {
+            continue;
+        }
+        used[i] = true;
+        let mut ring = segments[i].clone();
+
+        loop {
+            if ring.len() >= 2 && ring.first() == ring.last() {
+                break;
+            }
+            let tail = *ring.last().unwrap();
+            let mut matched = None;
+            for (j, seg) in segments.iter().enumerate() {
+                if used[j] || seg.len() < 2 {
+                    continue;
+                }
+                if *seg.first().unwrap() == tail {
+                    matched = Some((j, false));
+                    break;
+                } else if *seg.last().unwrap() == tail {
+                    matched = Some((j, true));
+                    break;
+                }
+            }
+            match matched {
+                Some((j, reverse)) => {
+                    used[j] = true;
+                    let seg = &segments[j];
+                    if reverse {
+                        // append seg reversed, skipping the shared first node
+                        for &nid in seg.iter().rev().skip(1) {
+                            ring.push(nid);
+                        }
+                    } else {
+                        for &nid in seg.iter().skip(1) {
+                            ring.push(nid);
+                        }
+                    }
+                }
+                None => break,
+            }
+        }
+
+        if ring.len() >= 4 && ring.first() == ring.last() {
+            rings.push(ring);
+        }
+    }
+
+    rings
 }

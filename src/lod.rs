@@ -140,7 +140,7 @@ fn should_include_decor(kind: &DecorationKind, tier: u8) -> bool {
     match tier {
         0 => true,
         1 => *kind != DecorationKind::Building,
-        2 => false,
+        2 => *kind == DecorationKind::Water,
         _ => true,
     }
 }

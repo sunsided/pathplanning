@@ -282,6 +282,7 @@ fn decor_fill_style(kind: DecorationKind) -> (u8, u8, u8, u8) {
         DecorationKind::Landuse => (20, 24, 34, 160),
         DecorationKind::PedestrianArea => (28, 30, 40, 150),
         DecorationKind::ServiceArea => (20, 24, 34, 140),
+        DecorationKind::Water => (22, 58, 110, 220),
     }
 }
 
@@ -365,12 +366,17 @@ fn draw_decorations_lod(
                 }
             }
         } else if !is_too_small {
+            let stroke_width = if decor.kind == DecorationKind::Water {
+                1.6f32
+            } else {
+                0.8f32
+            };
             let stroke_style = (
                 fill_style.0,
                 fill_style.1,
                 fill_style.2,
                 fill_style.3,
-                0.8f32,
+                stroke_width,
             );
             let stroke_entry = stroke_paths.iter_mut().find(|(s, _)| *s == stroke_style);
             let stroke_path = screen_path(&scratch.screen_pts, false);

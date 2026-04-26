@@ -70,6 +70,7 @@ pub enum DecorationKind {
     Landuse,
     PedestrianArea,
     ServiceArea,
+    Water,
 }
 
 /// A single decoration shape — either a closed polygon or an open polyline.
