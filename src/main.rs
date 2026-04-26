@@ -469,6 +469,7 @@ impl ApplicationHandler for App {
                     &self.graph,
                     &self.camera,
                     &mut self.manual_lod_tier,
+                    &mut self.debug_overlay,
                 );
                 if handled {
                     self.needs_redraw = true;
@@ -777,10 +778,29 @@ fn handle_keyboard_input(
     graph: &graph::RoadGraph,
     camera: &Camera,
     manual_lod_tier: &mut Option<u8>,
+    debug_overlay: &mut DebugOverlayState,
 ) -> bool {
     let mut changed = false;
 
     match key {
+        Key::Named(winit::keyboard::NamedKey::F1) => {
+            debug_overlay.hud_visible = !debug_overlay.hud_visible;
+            return true;
+        }
+        Key::Named(winit::keyboard::NamedKey::Backspace) => {
+            let start_node = input_state
+                .start_marker
+                .as_ref()
+                .and_then(|m| m.snapped_node);
+            let end_node = input_state.end_marker.as_ref().and_then(|m| m.snapped_node);
+            if let (Some(s), Some(e)) = (start_node, end_node) {
+                if s != e {
+                    planner.start_search(s, e);
+                    return true;
+                }
+            }
+            return false;
+        }
         Key::Character(c) if c.as_str() == "p" || c.as_str() == "P" => {
             let algs = Algorithm::all();
             let idx = algs

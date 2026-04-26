@@ -14,6 +14,7 @@ use vello::Scene;
 pub struct DebugOverlayState {
     pub line_buf: String,
     pub menu_layout: MenuLayout,
+    pub hud_visible: bool,
 }
 
 impl Default for DebugOverlayState {
@@ -21,6 +22,7 @@ impl Default for DebugOverlayState {
         Self {
             line_buf: String::with_capacity(64),
             menu_layout: MenuLayout::default(),
+            hud_visible: true,
         }
     }
 }
@@ -327,24 +329,30 @@ pub fn render(
     draw_markers(camera, input_state, scene);
 
     // Layer 7: debug overlay.
-    draw_debug(
-        graph,
-        camera,
-        planner,
-        pyramid,
-        manual_lod_tier,
-        scene,
-        debug_overlay,
-    );
+    if debug_overlay.hud_visible {
+        draw_debug(
+            graph,
+            camera,
+            planner,
+            pyramid,
+            manual_lod_tier,
+            scene,
+            debug_overlay,
+        );
+    }
 
     // Layer 8: HUD menu.
-    debug_overlay.menu_layout = draw_hud(
-        scene,
-        &planner.config,
-        input_state.hover_menu_item,
-        width,
-        height,
-    );
+    if debug_overlay.hud_visible {
+        debug_overlay.menu_layout = draw_hud(
+            scene,
+            &planner.config,
+            input_state.hover_menu_item,
+            width,
+            height,
+        );
+    } else {
+        debug_overlay.menu_layout = MenuLayout::default();
+    }
 }
 
 fn decor_fill_style(kind: DecorationKind) -> (u8, u8, u8, u8) {
