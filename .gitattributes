@@ -1,1 +1,2 @@
 *.pbf filter=lfs diff=lfs merge=lfs -text
+maps/berlin.osm.pbf filter=lfs diff=lfs merge=lfs -text
