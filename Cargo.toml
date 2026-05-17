@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 winit = "0.30"
-vello = "0.8"
+vello = "0.9"
 pollster = "0.4"
 fast-osmpbf = { git = "https://github.com/sunsided/fast-osmpbf", branch = "feature/memmap", features = ["mmap", "io-hints"] }
 ordered-float = "5"
