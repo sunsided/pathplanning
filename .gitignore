@@ -1,2 +1,5 @@
 /target
+/dist
+/web/pkg
+/web/graph.bin.gz
 *.osm.pbf

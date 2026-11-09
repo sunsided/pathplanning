@@ -2,6 +2,11 @@ version: "3"
 
 vars:
   CARGO: cargo
+  MAP: maps/berlin.osm.pbf
+  WEB_DIR: web
+  WEB_DIST: dist
+  WEB_BBOX: "52.49,13.36,52.55,13.47"
+  WEB_PORT: "8081"
 
 tasks:
   default:
@@ -95,3 +100,43 @@ tasks:
     desc: Remove Cargo build artifacts
     cmds:
       - "{{.CARGO}} clean"
+
+  check:wasm:
+    desc: Type-check the library for wasm32
+    cmds:
+      - "{{.CARGO}} check --target wasm32-unknown-unknown --lib"
+
+  export:graph:
+    desc: Export a compact graph asset for the web build
+    cmds:
+      - "{{.CARGO}} run --release --bin pathplanning -- --export {{.MAP}} {{.WEB_DIR}}/graph.bin.gz {{.WEB_BBOX}}"
+
+  wasm:build:
+    desc: Build the WebAssembly module with wasm-pack
+    cmds:
+      - wasm-pack build --target web --release --out-dir {{.WEB_DIR}}/pkg --out-name pathplanning
+
+  web:build:
+    desc: Build the web application (graph asset + wasm module)
+    deps:
+      - export:graph
+      - wasm:build
+
+  web:serve:
+    desc: Serve the web build locally
+    deps:
+      - web:build
+    cmds:
+      - python3 -m http.server {{.WEB_PORT}} --bind 127.0.0.1 --directory {{.WEB_DIR}}
+
+  web:dist:
+    desc: Assemble the deployable GitHub Pages artifact in dist/
+    deps:
+      - web:build
+    cmds:
+      - rm -rf {{.WEB_DIST}}
+      - mkdir -p {{.WEB_DIST}}/pkg
+      - cp {{.WEB_DIR}}/index.html {{.WEB_DIST}}/
+      - cp {{.WEB_DIR}}/graph.bin.gz {{.WEB_DIST}}/
+      - cp {{.WEB_DIR}}/pkg/pathplanning.js {{.WEB_DIR}}/pkg/pathplanning_bg.wasm {{.WEB_DIR}}/pkg/pathplanning.d.ts {{.WEB_DIST}}/pkg/
+

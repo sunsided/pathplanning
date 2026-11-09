@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+    <title>Path Planning - OSM*</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #0a0e1a;
+        color: #c8d3e8;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+
+      #canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        touch-action: none;
+        outline: none;
+      }
+
+      #loading {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1rem;
+        background: #0a0e1a;
+        transition: opacity 200ms ease;
+        z-index: 10;
+      }
+
+      #loading.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .spinner {
+        width: 2.5rem;
+        height: 2.5rem;
+        border: 3px solid #1e2a44;
+        border-top-color: #39d0ff;
+        border-radius: 50%;
+        animation: spin 900ms linear infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      #loading-error {
+        display: none;
+        max-width: min(48rem, 85vw);
+        padding: 1rem;
+        border: 1px solid #ff5c8a;
+        border-radius: 0.5rem;
+        color: #ffb3c8;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      #attribution {
+        position: fixed;
+        right: 0.5rem;
+        bottom: 0.35rem;
+        font-size: 0.7rem;
+        color: #6c7a96;
+        z-index: 5;
+      }
+
+      #attribution a {
+        color: #8fb4e8;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas"></canvas>
+
+    <div id="loading">
+      <div class="spinner"></div>
+      <div id="loading-status">Loading...</div>
+      <div id="loading-error"></div>
+    </div>
+
+    <div id="attribution">
+      Map data &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors
+    </div>
+
+    <script type="module">
+      import init from "./pkg/pathplanning.js";
+
+      function showError(message) {
+        document.getElementById("loading-status").textContent = "Failed to start";
+        const target = document.getElementById("loading-error");
+        target.textContent = message;
+        target.style.display = "block";
+      }
+
+      async function checkWebGpu() {
+        if (!navigator.gpu) {
+          throw new Error(
+            "This browser does not expose WebGPU. Vello requires WebGPU; " +
+              "use a current Chrome or Edge with hardware acceleration enabled.",
+          );
+        }
+        const adapter = await navigator.gpu.requestAdapter();
+        if (!adapter) {
+          const fallback = await navigator.gpu.requestAdapter({ forceFallbackAdapter: true });
+          if (fallback) {
+            throw new Error(
+              "Only a software WebGPU adapter is available, which wgpu does not select " +
+                "by default. Enable GPU acceleration or launch Chrome with " +
+                "--enable-unsafe-swiftshader.",
+            );
+          }
+          throw new Error(
+            "WebGPU is exposed, but no GPU adapter is available. Check chrome://gpu " +
+              "(WebGPU should be hardware accelerated). On Linux try launching Chrome with " +
+              "--enable-features=ForceEnableWebGpuInterop --ignore-gpu-blocklist, or use " +
+              "--enable-unsafe-webgpu --enable-features=Vulkan,WebGPU " +
+              "--use-webgpu-adapter=swiftshader --use-vulkan=swiftshader for software rendering.",
+          );
+        }
+      }
+
+      checkWebGpu()
+        .then(() => init())
+        .catch((error) => showError(String(error)));
+    </script>
+  </body>
+</html>

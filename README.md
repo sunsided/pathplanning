@@ -28,6 +28,23 @@ cargo run --release -- [path/to/map.osm.pbf]
 
 Defaults to `maps/berlin.osm.pbf` if no argument is given.
 
+### Web build
+
+The app can be built for the browser with WebAssembly. It requires WebGPU (current Chrome/Edge; Firefox/Safari support varies), because Vello renders through compute shaders. There is no WebGL2 fallback: if `navigator.gpu.requestAdapter()` returns `null`, the page cannot render. On Linux Chrome, if `chrome://gpu` reports WebGPU as accelerated but the adapter is still `null`, launch Chrome with `--enable-features=ForceEnableWebGpuInterop --ignore-gpu-blocklist`; for software rendering use `--enable-unsafe-webgpu --enable-features=Vulkan,WebGPU --use-webgpu-adapter=swiftshader --use-vulkan=swiftshader --ignore-gpu-blocklist`. You need `rustup target add wasm32-unknown-unknown` and `wasm-pack`.
+
+```bash
+# Export a compact graph asset + build the wasm module + serve it
+task -t Taskfile.dist.yaml web:serve
+```
+
+Then open <http://127.0.0.1:8081>. The map is clipped to a central Berlin bounding box by default (`WEB_BBOX` in `Taskfile.dist.yaml`) to keep the download small. To build the deployable tree without serving it:
+
+```bash
+task -t Taskfile.dist.yaml web:dist   # writes dist/
+```
+
+The GitHub Pages workflow builds and deploys `dist/` on every push to `main`.
+
 ### Mouse Controls
 
 | Action | Control |
