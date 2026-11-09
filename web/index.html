@@ -17,8 +17,11 @@
 
       #canvas {
         display: block;
+        position: fixed;
+        inset: 0;
         width: 100vw;
         height: 100vh;
+        height: 100dvh;
         touch-action: none;
         outline: none;
       }
@@ -79,10 +82,24 @@
       #attribution a {
         color: #8fb4e8;
       }
+
+      #render-info {
+        position: fixed;
+        left: 0.5rem;
+        top: 0.5rem;
+        display: none;
+        padding: 0.25rem 0.5rem;
+        border-radius: 0.25rem;
+        background: rgba(10, 14, 26, 0.85);
+        color: #39d0ff;
+        font-size: 0.75rem;
+        z-index: 6;
+      }
     </style>
   </head>
   <body>
     <canvas id="canvas"></canvas>
+    <div id="render-info"></div>
 
     <div id="loading">
       <div class="spinner"></div>

@@ -29,6 +29,8 @@ pub struct InputState {
     pub is_drag: bool,
     pub hover_menu_item: Option<MenuItemKind>,
     pub pressed_menu_item: Option<MenuItemKind>,
+    /// Active primary touch identifier, if any.
+    pub active_touch: Option<u64>,
 }
 
 impl InputState {
@@ -46,6 +48,7 @@ impl InputState {
             is_drag: false,
             hover_menu_item: None,
             pressed_menu_item: None,
+            active_touch: None,
         }
     }
 

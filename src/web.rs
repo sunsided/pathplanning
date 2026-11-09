@@ -21,10 +21,23 @@ pub fn start() {
     });
 }
 
-pub(crate) fn ready() {
+pub(crate) fn ready(width: u32, height: u32) {
+    log::info!("First frame presented at {width}x{height}");
     if let Some(element) = element("loading") {
         let _ = element.set_attribute("style", "display: none");
     }
+    if debug_enabled()
+        && let Some(element) = element("render-info")
+    {
+        element.set_text_content(Some(&format!("{width}x{height} px")));
+        let _ = element.set_attribute("style", "display: block");
+    }
+}
+
+fn debug_enabled() -> bool {
+    web_sys::window()
+        .and_then(|window| window.location().search().ok())
+        .is_some_and(|search| search.contains("debug"))
 }
 
 async fn boot() -> Result<(), JsValue> {

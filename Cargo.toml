@@ -49,6 +49,7 @@ features = [
     "Document",
     "Element",
     "HtmlCanvasElement",
+    "Location",
     "Request",
     "RequestInit",
     "RequestMode",

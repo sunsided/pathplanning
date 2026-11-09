@@ -23,7 +23,9 @@ use vello::wgpu::{self, PresentMode};
 use vello::{AaConfig, AaSupport, Renderer, RendererOptions, Scene};
 
 const WINDOW_TITLE: &str = "Path Planning - OSM*";
+#[cfg(not(target_arch = "wasm32"))]
 const DEFAULT_WIDTH: u32 = 1280;
+#[cfg(not(target_arch = "wasm32"))]
 const DEFAULT_HEIGHT: u32 = 720;
 
 // ---------------------------------------------------------------------------
@@ -51,6 +53,9 @@ struct App {
     render_scratch: RenderScratch,
     needs_redraw: bool,
     manual_lod_tier: Option<u8>,
+    camera_initialized: bool,
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    first_frame_presented: bool,
 
     // Vello / wgpu.
     render_context: Option<RenderContext>,
@@ -92,6 +97,8 @@ impl App {
             render_scratch,
             needs_redraw: true,
             manual_lod_tier: None,
+            camera_initialized: false,
+            first_frame_presented: false,
             render_context,
             render_state: None,
             window: None,
@@ -150,6 +157,7 @@ impl App {
         self.window = Some(window);
         self.needs_redraw = true;
         camera_init(&mut self.camera, &self.graph, width, height);
+        self.camera_initialized = true;
     }
 
     fn render_frame(&mut self) {
@@ -191,11 +199,21 @@ impl App {
             height,
         );
 
+        #[cfg(not(target_arch = "wasm32"))]
         let params = vello::RenderParams {
             base_color: vello::peniko::Color::from_rgba8(10, 14, 26, 255),
             width,
             height,
             antialiasing_method: AaConfig::Msaa16,
+        };
+        #[cfg(target_arch = "wasm32")]
+        let params = vello::RenderParams {
+            base_color: vello::peniko::Color::from_rgba8(10, 14, 26, 255),
+            width,
+            height,
+            // Prefer the cheaper area AA on mobile GPUs, which may not be able
+            // to allocate Vello's large MSAA targets.
+            antialiasing_method: AaConfig::Area,
         };
 
         render_state
@@ -243,6 +261,13 @@ impl App {
 
         device.poll(wgpu::PollType::Poll).unwrap();
 
+        #[cfg(target_arch = "wasm32")]
+        if !self.first_frame_presented {
+            self.first_frame_presented = true;
+            log::info!("First frame presented at {width}x{height}");
+            crate::web::ready(width, height);
+        }
+
         self.needs_redraw = false;
     }
 
@@ -252,8 +277,20 @@ impl App {
         {
             render_context.resize_surface(&mut render_state.surface, width, height);
         }
-        self.camera.screen_width = width as f32;
-        self.camera.screen_height = height as f32;
+
+        // The web backend reports a zero-sized window until its resize observer
+        // fires, so the initial camera must be fitted once real dimensions are
+        // known; otherwise the zoom is computed for a 1x1 viewport.
+        if !self.camera_initialized {
+            if width >= 2 && height >= 2 {
+                let graph = self.graph.clone();
+                camera_init(&mut self.camera, &graph, width, height);
+                self.camera_initialized = true;
+            }
+        } else {
+            self.camera.screen_width = width as f32;
+            self.camera.screen_height = height as f32;
+        }
         self.needs_redraw = true;
     }
 }
@@ -263,12 +300,44 @@ fn camera_init(camera: &mut Camera, graph: &graph::RoadGraph, width: u32, height
     *camera = Camera::new_from_bbox(bbox, width as f32, height as f32);
 }
 
+#[cfg(target_arch = "wasm32")]
+fn canvas_backing_size() -> Option<(u32, u32)> {
+    use wasm_bindgen::JsCast;
+
+    let window = web_sys::window()?;
+    let dpr = window.device_pixel_ratio().max(1.0);
+    let canvas = window
+        .document()?
+        .get_element_by_id("canvas")?
+        .dyn_into::<web_sys::HtmlCanvasElement>()
+        .ok()?;
+
+    let (css_w, css_h) = (canvas.client_width(), canvas.client_height());
+    let (css_w, css_h): (f64, f64) = if css_w > 0 && css_h > 0 {
+        (css_w as f64, css_h as f64)
+    } else {
+        (
+            window.inner_width().ok()?.as_f64()?,
+            window.inner_height().ok()?.as_f64()?,
+        )
+    };
+    if css_w <= 0.0 || css_h <= 0.0 {
+        return None;
+    }
+
+    Some(((css_w * dpr).round() as u32, (css_h * dpr).round() as u32))
+}
+
 impl App {
     fn create_window(&self, event_loop: &ActiveEventLoop) -> Arc<Window> {
         #[allow(unused_mut)]
-        let mut attributes = Window::default_attributes()
-            .with_title(WINDOW_TITLE)
-            .with_inner_size(winit::dpi::LogicalSize::new(DEFAULT_WIDTH, DEFAULT_HEIGHT));
+        let mut attributes = Window::default_attributes().with_title(WINDOW_TITLE);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            attributes = attributes
+                .with_inner_size(winit::dpi::LogicalSize::new(DEFAULT_WIDTH, DEFAULT_HEIGHT));
+        }
 
         #[cfg(target_arch = "wasm32")]
         {
@@ -326,55 +395,29 @@ impl App {
             }
 
             WindowEvent::CursorMoved { position, .. } => {
-                let new_pos = [position.x as f32, position.y as f32];
-                self.input_state.drag_screen_pos = new_pos;
+                self.pointer_moved([position.x as f32, position.y as f32]);
+            }
 
-                if !self.input_state.left_button_down {
-                    self.input_state.hover_menu_item =
-                        self.debug_overlay.menu_layout.hit_test(new_pos);
-                    self.needs_redraw = true;
-                }
-
-                if self.input_state.left_button_down {
-                    if !self.input_state.is_drag && self.input_state.drag_distance() > 5.0 {
-                        self.input_state.is_drag = true;
+            WindowEvent::Touch(touch) => {
+                use winit::event::TouchPhase;
+                let pos = [touch.location.x as f32, touch.location.y as f32];
+                match touch.phase {
+                    TouchPhase::Started => {
+                        if self.input_state.active_touch.is_none() {
+                            self.input_state.active_touch = Some(touch.id);
+                            self.pointer_pressed(pos);
+                        }
                     }
-
-                    if self.input_state.is_drag {
-                        match self.input_state.dragging {
-                            Some(MarkerKind::Start) => {
-                                let wp = self.camera.screen_to_world(new_pos);
-                                if let Some(ref mut m) = self.input_state.start_marker {
-                                    m.world_pos = wp;
-                                    m.snapped_node = self.spatial_index.nearest_node(wp);
-                                    if let Some(id) = m.snapped_node {
-                                        m.world_pos = self.graph.nodes[id].world_pos;
-                                    }
-                                }
-                                self.needs_redraw = true;
-                            }
-                            Some(MarkerKind::End) => {
-                                let wp = self.camera.screen_to_world(new_pos);
-                                if let Some(ref mut m) = self.input_state.end_marker {
-                                    m.world_pos = wp;
-                                    m.snapped_node = self.spatial_index.nearest_node(wp);
-                                    if let Some(id) = m.snapped_node {
-                                        m.world_pos = self.graph.nodes[id].world_pos;
-                                    }
-                                }
-                                self.needs_redraw = true;
-                            }
-                            None => {
-                                if let (Some(pan_start), Some(pan_center)) = (
-                                    self.input_state.pan_start,
-                                    self.input_state.pan_center_start,
-                                ) {
-                                    let dx = (new_pos[0] - pan_start[0]) as f64 / self.camera.zoom;
-                                    let dy = (new_pos[1] - pan_start[1]) as f64 / self.camera.zoom;
-                                    self.camera.center = [pan_center[0] - dx, pan_center[1] + dy];
-                                    self.needs_redraw = true;
-                                }
-                            }
+                    TouchPhase::Moved => {
+                        if self.input_state.active_touch == Some(touch.id) {
+                            self.pointer_moved(pos);
+                        }
+                    }
+                    TouchPhase::Ended | TouchPhase::Cancelled => {
+                        if self.input_state.active_touch == Some(touch.id) {
+                            self.pointer_moved(pos);
+                            self.pointer_released();
+                            self.input_state.active_touch = None;
                         }
                     }
                 }
@@ -386,70 +429,10 @@ impl App {
                 match button {
                     MouseButton::Left => match state {
                         ElementState::Pressed => {
-                            self.input_state.left_button_down = true;
-                            self.input_state.press_pos = screen_pos;
-                            self.input_state.is_drag = false;
-
-                            let hud_hit = self.debug_overlay.menu_layout.hit_test(screen_pos);
-                            let hud_panel =
-                                self.debug_overlay.menu_layout.hit_test_panel(screen_pos);
-
-                            if hud_hit.is_some() {
-                                self.input_state.pressed_menu_item = hud_hit;
-                            } else if hud_panel {
-                                // Inside panel but not on an item — consume to prevent pan/marker
-                            } else {
-                                let near =
-                                    self.input_state.marker_near(screen_pos, 12.0, &self.camera);
-                                if let Some(kind) = near {
-                                    self.input_state.dragging = Some(kind);
-                                } else {
-                                    self.input_state.pan_start = Some(screen_pos);
-                                    self.input_state.pan_center_start = Some(self.camera.center);
-                                }
-                            }
+                            self.pointer_pressed(screen_pos);
                         }
                         ElementState::Released => {
-                            self.input_state.left_button_down = false;
-
-                            if let Some(pressed) = self.input_state.pressed_menu_item.take() {
-                                let released = self.debug_overlay.menu_layout.hit_test(screen_pos);
-                                if released == Some(pressed) {
-                                    apply_menu_choice(
-                                        pressed,
-                                        &mut self.planner,
-                                        &mut self.input_state,
-                                        &self.graph,
-                                        &self.camera,
-                                    );
-                                }
-                                self.needs_redraw = true;
-                            } else if self.input_state.dragging.is_some() {
-                                if snap_and_trigger(
-                                    &mut self.input_state,
-                                    &mut self.planner,
-                                    &self.spatial_index,
-                                    &self.graph,
-                                ) {
-                                    self.needs_redraw = true;
-                                }
-                                self.input_state.dragging = None;
-                            } else if !self.input_state.is_drag {
-                                let click_pos = self.input_state.press_pos;
-                                let _started_search = place_marker(
-                                    &mut self.input_state,
-                                    &mut self.planner,
-                                    click_pos,
-                                    &self.camera,
-                                    &self.spatial_index,
-                                    &self.graph,
-                                );
-                                self.needs_redraw = true;
-                            }
-
-                            self.input_state.pan_start = None;
-                            self.input_state.pan_center_start = None;
-                            self.input_state.is_drag = false;
+                            self.pointer_released();
                         }
                     },
 
@@ -512,6 +495,129 @@ impl App {
 
             _ => {}
         }
+    }
+
+    fn pointer_pressed(&mut self, screen_pos: [f32; 2]) {
+        self.input_state.drag_screen_pos = screen_pos;
+        self.input_state.left_button_down = true;
+        self.input_state.press_pos = screen_pos;
+        self.input_state.is_drag = false;
+
+        let hud_hit = self.debug_overlay.menu_layout.hit_test(screen_pos);
+        let hud_panel = self.debug_overlay.menu_layout.hit_test_panel(screen_pos);
+
+        if hud_hit.is_some() {
+            self.input_state.pressed_menu_item = hud_hit;
+        } else if hud_panel {
+            // Inside panel but not on an item — consume to prevent pan/marker
+        } else {
+            let near = self.input_state.marker_near(screen_pos, 12.0, &self.camera);
+            if let Some(kind) = near {
+                self.input_state.dragging = Some(kind);
+            } else {
+                self.input_state.pan_start = Some(screen_pos);
+                self.input_state.pan_center_start = Some(self.camera.center);
+            }
+        }
+    }
+
+    fn pointer_moved(&mut self, new_pos: [f32; 2]) {
+        self.input_state.drag_screen_pos = new_pos;
+
+        if !self.input_state.left_button_down {
+            self.input_state.hover_menu_item = self.debug_overlay.menu_layout.hit_test(new_pos);
+            self.needs_redraw = true;
+        }
+
+        if self.input_state.left_button_down {
+            if !self.input_state.is_drag && self.input_state.drag_distance() > 5.0 {
+                self.input_state.is_drag = true;
+            }
+
+            if self.input_state.is_drag {
+                match self.input_state.dragging {
+                    Some(MarkerKind::Start) => {
+                        let wp = self.camera.screen_to_world(new_pos);
+                        if let Some(ref mut m) = self.input_state.start_marker {
+                            m.world_pos = wp;
+                            m.snapped_node = self.spatial_index.nearest_node(wp);
+                            if let Some(id) = m.snapped_node {
+                                m.world_pos = self.graph.nodes[id].world_pos;
+                            }
+                        }
+                        self.needs_redraw = true;
+                    }
+                    Some(MarkerKind::End) => {
+                        let wp = self.camera.screen_to_world(new_pos);
+                        if let Some(ref mut m) = self.input_state.end_marker {
+                            m.world_pos = wp;
+                            m.snapped_node = self.spatial_index.nearest_node(wp);
+                            if let Some(id) = m.snapped_node {
+                                m.world_pos = self.graph.nodes[id].world_pos;
+                            }
+                        }
+                        self.needs_redraw = true;
+                    }
+                    None => {
+                        if let (Some(pan_start), Some(pan_center)) = (
+                            self.input_state.pan_start,
+                            self.input_state.pan_center_start,
+                        ) {
+                            let dx = (new_pos[0] - pan_start[0]) as f64 / self.camera.zoom;
+                            let dy = (new_pos[1] - pan_start[1]) as f64 / self.camera.zoom;
+                            self.camera.center = [pan_center[0] - dx, pan_center[1] + dy];
+                            self.needs_redraw = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn pointer_released(&mut self) {
+        self.input_state.left_button_down = false;
+
+        if let Some(pressed) = self.input_state.pressed_menu_item.take() {
+            let released = self
+                .debug_overlay
+                .menu_layout
+                .hit_test(self.input_state.drag_screen_pos);
+            if released == Some(pressed) {
+                apply_menu_choice(
+                    pressed,
+                    &mut self.planner,
+                    &mut self.input_state,
+                    &self.graph,
+                    &self.camera,
+                );
+            }
+            self.needs_redraw = true;
+        } else if self.input_state.dragging.is_some() {
+            if snap_and_trigger(
+                &mut self.input_state,
+                &mut self.planner,
+                &self.spatial_index,
+                &self.graph,
+            ) {
+                self.needs_redraw = true;
+            }
+            self.input_state.dragging = None;
+        } else if !self.input_state.is_drag {
+            let click_pos = self.input_state.press_pos;
+            let _started_search = place_marker(
+                &mut self.input_state,
+                &mut self.planner,
+                click_pos,
+                &self.camera,
+                &self.spatial_index,
+                &self.graph,
+            );
+            self.needs_redraw = true;
+        }
+
+        self.input_state.pan_start = None;
+        self.input_state.pan_center_start = None;
+        self.input_state.is_drag = false;
     }
 
     fn on_about_to_wait(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
@@ -582,7 +688,14 @@ pub fn run(graph: Arc<RoadGraph>) {
             let (window, width, height, render_context) = {
                 let mut app = self.inner.borrow_mut();
                 let window = app.create_window(event_loop);
-                let size = window.inner_size();
+                // winit's web backend starts with a zero-sized canvas until its
+                // resize observer fires; fall back to the laid-out canvas size.
+                let mut size = window.inner_size();
+                if (size.width == 0 || size.height == 0)
+                    && let Some((w, h)) = canvas_backing_size()
+                {
+                    size = winit::dpi::PhysicalSize::new(w, h);
+                }
                 app.window = Some(window.clone());
                 (
                     window,
@@ -607,9 +720,11 @@ pub fn run(graph: Arc<RoadGraph>) {
                 app.render_context = Some(render_context);
                 app.render_state = Some(render_state);
                 app.needs_redraw = true;
-                let graph = app.graph.clone();
-                camera_init(&mut app.camera, &graph, width, height);
-                crate::web::ready();
+                if width > 1 && height > 1 {
+                    let graph = app.graph.clone();
+                    camera_init(&mut app.camera, &graph, width, height);
+                    app.camera_initialized = true;
+                }
             });
         }
 
