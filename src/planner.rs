@@ -1,4 +1,5 @@
 pub mod astar;
+pub mod bidir_astar;
 pub mod dijkstra;
 pub mod greedy;
 pub mod heuristic;

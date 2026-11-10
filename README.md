@@ -85,11 +85,15 @@ The top-right HUD panel provides clickable menu items to change planner configur
 
 ## Algorithms
 
-Four pathfinding algorithms are available, selectable via the `A`/`P` keys or the HUD menu:
+Six pathfinding algorithms are available, selectable via the `A`/`P` keys or the HUD menu:
 
 ### A*
 
 The default algorithm. Uses `f = g + h` where `g` is the actual cost from start and `h` is the heuristic estimate to goal. A* is optimal (guarantees shortest path) when the heuristic is admissible (never overestimates).
+
+### Bidirectional A*
+
+Runs two A* searches at once, alternating between a forward search from the start and a backward search from the goal over reversed edges (so one-way streets stay correct). Both use the averaged potential `p(v) = (h(v, goal) - h(start, v)) / 2`, which lets the search stop as soon as the sum of both queue minima reaches the best meeting cost found so far. Optimal for consistent heuristics, and typically expands fewer nodes than unidirectional A* on long routes.
 
 ### Dijkstra
 
@@ -122,7 +126,7 @@ An asymptotically optimal variant of RRT that improves path quality over time th
 
 ## Heuristics
 
-Heuristics estimate the remaining cost from a node to the goal. They are used by A* and Greedy Best-First. All heuristics account for Web Mercator projection distortion by scaling distances with `cos(mean_latitude)` to return ground-true meters.
+Heuristics estimate the remaining cost from a node to the goal. They are used by A*, Bidirectional A* and Greedy Best-First. All heuristics account for Web Mercator projection distortion by scaling distances with `cos(mean_latitude)` to return ground-true meters.
 
 | Heuristic | Formula | Admissible? | Description |
 |-----------|---------|-------------|-------------|
@@ -172,7 +176,7 @@ This ensures the heuristic remains consistent with the cost function, preserving
 |-----------|-------------|
 | `graph.rs` | Directed road graph with nodes, edges, and road classifications |
 | `osm_loader.rs` | OSM PBF file parser and graph construction |
-| `planner/` | Pathfinding algorithms (A*, Dijkstra, Greedy, RRT, RRT*) with configurable heuristics and cost modes |
+| `planner/` | Pathfinding algorithms (A*, Bidirectional A*, Dijkstra, Greedy, RRT, RRT*) with configurable heuristics and cost modes |
 | `spatial_index.rs` | Nearest-node lookup for marker snapping |
 | `view_index.rs` | R*-tree spatial index for viewport-based edge queries |
 | `lod.rs` | LOD pyramid for multi-scale rendering |

@@ -1,4 +1,5 @@
 use crate::graph::{GraphEdge, RoadGraph};
+use crate::planner::bidir_astar::BidirAStarState;
 use crate::planner::heuristic::Heuristic;
 use crate::planner::rrt::RrtState;
 use crate::planner::rrt_star::RrtStarState;
@@ -63,6 +64,7 @@ impl CostMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Algorithm {
     AStar,
+    BidirAStar,
     Dijkstra,
     GreedyBestFirst,
     Rrt,
@@ -73,6 +75,7 @@ impl Algorithm {
     pub fn name(&self) -> &'static str {
         match self {
             Algorithm::AStar => "A*",
+            Algorithm::BidirAStar => "Bidirectional A*",
             Algorithm::Dijkstra => "Dijkstra",
             Algorithm::GreedyBestFirst => "Greedy Best-First",
             Algorithm::Rrt => "RRT",
@@ -83,6 +86,7 @@ impl Algorithm {
     pub fn short_label(&self) -> &'static str {
         match self {
             Algorithm::AStar => "A*",
+            Algorithm::BidirAStar => "Bi-A*",
             Algorithm::Dijkstra => "Dijkstra",
             Algorithm::GreedyBestFirst => "Greedy",
             Algorithm::Rrt => "RRT",
@@ -93,6 +97,7 @@ impl Algorithm {
     pub fn all() -> &'static [Algorithm] {
         &[
             Algorithm::AStar,
+            Algorithm::BidirAStar,
             Algorithm::Dijkstra,
             Algorithm::GreedyBestFirst,
             Algorithm::Rrt,
@@ -102,7 +107,7 @@ impl Algorithm {
 
     pub fn uses_heuristic(&self) -> bool {
         match self {
-            Algorithm::AStar | Algorithm::GreedyBestFirst => true,
+            Algorithm::AStar | Algorithm::BidirAStar | Algorithm::GreedyBestFirst => true,
             Algorithm::Dijkstra | Algorithm::Rrt | Algorithm::RrtStar => false,
         }
     }
@@ -141,6 +146,7 @@ pub struct PlannerState {
     pub goal: Option<usize>,
     pub rrt: Option<RrtState>,
     pub rrt_star: Option<RrtStarState>,
+    pub bidir_astar: Option<BidirAStarState>,
 }
 
 impl PlannerState {
@@ -161,6 +167,7 @@ impl PlannerState {
             goal: None,
             rrt: None,
             rrt_star: None,
+            bidir_astar: None,
         }
     }
 
@@ -179,6 +186,7 @@ impl PlannerState {
         self.goal = None;
         self.rrt = None;
         self.rrt_star = None;
+        self.bidir_astar = None;
     }
 
     pub fn start_search(&mut self, start: usize, goal: usize) {
@@ -208,6 +216,9 @@ impl PlannerState {
     pub fn step(&mut self, graph: &RoadGraph, n_steps: usize) -> bool {
         match self.config.algorithm {
             Algorithm::AStar => crate::planner::astar::step_astar(self, graph, n_steps),
+            Algorithm::BidirAStar => {
+                crate::planner::bidir_astar::step_bidir_astar(self, graph, n_steps)
+            }
             Algorithm::Dijkstra => crate::planner::dijkstra::step_dijkstra(self, graph, n_steps),
             Algorithm::GreedyBestFirst => crate::planner::greedy::step_greedy(self, graph, n_steps),
             Algorithm::Rrt => crate::planner::rrt::step_rrt(self, graph, n_steps),
