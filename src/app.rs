@@ -587,6 +587,7 @@ impl App {
             if released == Some(pressed) {
                 apply_menu_choice(
                     pressed,
+                    &mut self.debug_overlay,
                     &mut self.planner,
                     &mut self.input_state,
                     &self.graph,
@@ -895,6 +896,7 @@ fn now_seed() -> u64 {
 
 fn apply_menu_choice(
     item: MenuItemKind,
+    overlay: &mut DebugOverlayState,
     planner: &mut PlannerState,
     input_state: &mut InputState,
     graph: &graph::RoadGraph,
@@ -927,6 +929,11 @@ fn apply_menu_choice(
         }
         MenuItemKind::Swap => swap_markers(input_state, graph),
         MenuItemKind::Random => randomize_route(input_state, graph, camera),
+        MenuItemKind::ChRanks => {
+            // Display-only toggle; the search is unaffected.
+            overlay.show_ch_ranks = !overlay.show_ch_ranks;
+            false
+        }
     };
 
     if !changed {

@@ -114,6 +114,7 @@ fn now_ms() -> f64 {
 /// Resumable single-source Dijkstra; `dist[v]` is the cost from `source` to
 /// `v` (or from `v` to `source` if `backward`), `INFINITY` if unreachable.
 pub(crate) struct DijkstraRun {
+    pub source: usize,
     pub dist: Vec<f64>,
     heap: BinaryHeap<HeapEntry>,
     backward: bool,
@@ -128,6 +129,7 @@ impl DijkstraRun {
             node_id: source,
         }]);
         Self {
+            source,
             dist,
             heap,
             backward,
@@ -303,6 +305,16 @@ impl PrecomputeQueue {
 }
 
 impl RoadGraph {
+    /// Landmarks for `mode` if already built (never blocks).
+    pub(crate) fn ready_landmarks(&self, mode: CostMode) -> Option<&Landmarks> {
+        self.precomputed.landmarks[mode_index(mode)].get()
+    }
+
+    /// Contraction hierarchy for `mode` if already built (never blocks).
+    pub(crate) fn ready_hierarchy(&self, mode: CostMode) -> Option<&ContractionHierarchy> {
+        self.precomputed.ch[mode_index(mode)].get()
+    }
+
     pub(crate) fn has_precomputed(&self, kind: PrecomputeKind, mode: CostMode) -> bool {
         let i = mode_index(mode);
         match kind {

@@ -25,6 +25,8 @@ pub struct ContractionHierarchy {
     up: [Vec<Vec<(usize, f64)>>; 2],
     /// Middle node of each shortcut edge, for unpacking.
     shortcut_mid: HashMap<(usize, usize), usize>,
+    /// Nodes in contraction order: least important first.
+    pub order: Vec<usize>,
 }
 
 /// Mutable overlay graph during contraction: cheapest edge per node pair among
@@ -114,7 +116,7 @@ pub(crate) struct ChBuilder {
     contracted_neighbors: Vec<i64>,
     queue: BinaryHeap<Reverse<(i64, usize)>>,
     next_init: usize,
-    contracted: usize,
+    order: Vec<usize>,
 }
 
 impl ChBuilder {
@@ -129,7 +131,7 @@ impl ChBuilder {
             contracted_neighbors: vec![0; n],
             queue: BinaryHeap::with_capacity(n),
             next_init: 0,
-            contracted: 0,
+            order: Vec::with_capacity(n),
         }
     }
 
@@ -142,7 +144,7 @@ impl ChBuilder {
 
     pub(crate) fn progress(&self) -> f32 {
         let n = self.up[FWD].len().max(1);
-        (self.next_init + self.contracted) as f32 / (2 * n) as f32
+        (self.next_init + self.order.len()) as f32 / (2 * n) as f32
     }
 
     /// Works until `deadline`; returns the hierarchy once complete.
@@ -190,6 +192,7 @@ impl ChBuilder {
         Some(ContractionHierarchy {
             up: std::mem::take(&mut self.up),
             shortcut_mid: std::mem::take(&mut self.shortcut_mid),
+            order: std::mem::take(&mut self.order),
         })
     }
 
@@ -212,7 +215,7 @@ impl ChBuilder {
                 self.shortcut_mid.insert((u, w), v);
             }
         }
-        self.contracted += 1;
+        self.order.push(v);
     }
 }
 
@@ -247,6 +250,23 @@ impl ContractionHierarchy {
 pub struct ChState {
     core: BidirCore,
     queues: [LazyQueue; 2],
+}
+
+impl ChState {
+    /// `(parent, child)` hierarchy edges of the forward (`backward == false`)
+    /// or backward upward search tree; many are shortcuts.
+    pub(crate) fn search_tree(&self, backward: bool) -> impl Iterator<Item = (usize, usize)> + '_ {
+        let dir = if backward { BWD } else { FWD };
+        self.core.sides[dir]
+            .parent
+            .iter()
+            .map(|(&child, &parent)| (parent, child))
+    }
+
+    /// Best start -> goal path in the hierarchy, before shortcut unpacking.
+    pub(crate) fn packed_path(&self) -> Option<Vec<usize>> {
+        self.core.path()
+    }
 }
 
 /// Contraction hierarchy query step. The first call builds the hierarchy for

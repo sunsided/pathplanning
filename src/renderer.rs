@@ -15,6 +15,8 @@ pub struct DebugOverlayState {
     pub line_buf: String,
     pub menu_layout: MenuLayout,
     pub hud_visible: bool,
+    /// Gold contraction-rank dots for CH; off by default (busy).
+    pub show_ch_ranks: bool,
 }
 
 impl Default for DebugOverlayState {
@@ -23,6 +25,7 @@ impl Default for DebugOverlayState {
             line_buf: String::with_capacity(64),
             menu_layout: MenuLayout::default(),
             hud_visible: true,
+            show_ch_ranks: false,
         }
     }
 }
@@ -34,6 +37,7 @@ pub enum MenuItemKind {
     CostMode(CostMode),
     Random,
     Swap,
+    ChRanks,
 }
 
 #[derive(Debug, Clone)]
@@ -104,6 +108,8 @@ fn get_glyph(c: u8) -> [u8; 8] {
         b'-' => [0x00, 0x00, 0x00, 0x7E, 0x00, 0x00, 0x00, 0x00],
         b'.' => [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18],
         b':' => [0x00, 0x18, 0x18, 0x00, 0x00, 0x18, 0x18, 0x00],
+        b'(' => [0x0C, 0x18, 0x30, 0x30, 0x30, 0x18, 0x0C, 0x00],
+        b')' => [0x30, 0x18, 0x0C, 0x0C, 0x0C, 0x18, 0x30, 0x00],
         b'%' => [0x62, 0x66, 0x0C, 0x18, 0x30, 0x66, 0x46, 0x00],
         b'/' => [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x00],
         b'0' => [0x3C, 0x66, 0x6E, 0x76, 0x66, 0x66, 0x3C, 0x00],
@@ -292,6 +298,17 @@ pub fn render(
     // Layer 3: frontier (open-set) nodes.
     draw_frontier(graph, camera, planner, scene, width);
 
+    // Layer 3b: contraction hierarchy ranks and upward search trees.
+    draw_ch_hierarchy(
+        graph,
+        camera,
+        planner,
+        debug_overlay.show_ch_ranks,
+        scene,
+        width,
+        height,
+    );
+
     // Layer 4: current best path (neon cyan).
     if let Some(ref path) = planner.best_path {
         draw_node_path(
@@ -326,6 +343,10 @@ pub fn render(
         );
     }
 
+    // Layer 5b: CH path before shortcut unpacking, and ALT landmarks.
+    draw_ch_packed_path(graph, camera, planner, scene);
+    draw_landmarks(graph, camera, planner, scene);
+
     // Layer 6: markers.
     draw_markers(camera, input_state, scene);
 
@@ -350,6 +371,7 @@ pub fn render(
         debug_overlay.menu_layout = draw_hud(
             scene,
             &planner.config,
+            debug_overlay.show_ch_ranks,
             input_state.hover_menu_item,
             width,
             height,
@@ -719,6 +741,140 @@ fn draw_node_path(
     );
 }
 
+/// Share of nodes, by contraction rank, highlighted as the hierarchy's top.
+const CH_TOP_PERCENT: usize = 3;
+
+fn screen_point(camera: &Camera, graph: &RoadGraph, node: usize) -> vello::kurbo::Point {
+    let sp = camera.world_to_screen(graph.nodes[node].world_pos);
+    vello::kurbo::Point::new(sp[0] as f64, sp[1] as f64)
+}
+
+/// Gold dots on the most important nodes (contracted last, so most queries
+/// meet there), plus the forward and backward upward search trees drawn as
+/// straight hierarchy edges, which makes shortcuts visible as long jumps.
+fn draw_ch_hierarchy(
+    graph: &RoadGraph,
+    camera: &Camera,
+    planner: &PlannerState,
+    show_ranks: bool,
+    scene: &mut Scene,
+    width: u32,
+    height: u32,
+) {
+    if planner.config.algorithm != Algorithm::ContractionHierarchy {
+        return;
+    }
+    let (w, h) = (width as f64, height as f64);
+    if let Some(ch) = graph.ready_hierarchy(planner.config.cost_mode)
+        && show_ranks
+    {
+        let top = (ch.order.len() * CH_TOP_PERCENT / 100).max(1);
+        for (i, &v) in ch.order.iter().rev().take(top).enumerate() {
+            let p = screen_point(camera, graph, v);
+            if p.x < -8.0 || p.y < -8.0 || p.x > w + 8.0 || p.y > h + 8.0 {
+                continue;
+            }
+            let t = 1.0 - i as f64 / top as f64;
+            let alpha = (70.0 + 185.0 * t) as u8;
+            scene.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                rgba(255, 190, 40, alpha),
+                None,
+                &Circle::new(p, 1.5 + 3.5 * t * t),
+            );
+        }
+    }
+
+    let Some(search) = planner.ch.as_ref() else {
+        return;
+    };
+    for (backward, color) in [
+        (false, rgba(80, 255, 140, 170)),
+        (true, rgba(255, 90, 200, 170)),
+    ] {
+        let mut bez = BezPath::new();
+        for (parent, child) in search.search_tree(backward) {
+            bez.move_to(screen_point(camera, graph, parent));
+            bez.line_to(screen_point(camera, graph, child));
+        }
+        scene.stroke(&Stroke::new(1.2), Affine::IDENTITY, color, None, &bez);
+    }
+}
+
+/// The hierarchy path the CH query found, before shortcut unpacking: a few
+/// straight hops up to the top node and back down.
+fn draw_ch_packed_path(
+    graph: &RoadGraph,
+    camera: &Camera,
+    planner: &PlannerState,
+    scene: &mut Scene,
+) {
+    if planner.config.algorithm != Algorithm::ContractionHierarchy {
+        return;
+    }
+    let Some(path) = planner.ch.as_ref().and_then(|s| s.packed_path()) else {
+        return;
+    };
+    let color = rgba(255, 230, 0, 230);
+    let mut bez = BezPath::new();
+    for (i, &v) in path.iter().enumerate() {
+        let p = screen_point(camera, graph, v);
+        if i == 0 {
+            bez.move_to(p);
+        } else {
+            bez.line_to(p);
+        }
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            color,
+            None,
+            &Circle::new(p, 3.5),
+        );
+    }
+    let stroke = Stroke::new(2.0).with_dashes(0.0, [7.0, 4.0]);
+    scene.stroke(&stroke, Affine::IDENTITY, color, None, &bez);
+}
+
+fn shows_landmarks(planner: &PlannerState) -> bool {
+    planner.config.algorithm.uses_heuristic() && planner.config.heuristic == Heuristic::Alt
+}
+
+/// ALT landmarks as labelled orange squares.
+fn draw_landmarks(graph: &RoadGraph, camera: &Camera, planner: &PlannerState, scene: &mut Scene) {
+    if !shows_landmarks(planner) {
+        return;
+    }
+    let Some(landmarks) = graph.ready_landmarks(planner.config.cost_mode) else {
+        return;
+    };
+    let mut label = String::new();
+    for (i, &v) in landmarks.nodes.iter().enumerate() {
+        let p = screen_point(camera, graph, v);
+        let square = vello::kurbo::Rect::from_center_size(p, (12.0, 12.0));
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            rgba(255, 140, 0, 240),
+            None,
+            &square,
+        );
+        scene.stroke(
+            &Stroke::new(1.5),
+            Affine::IDENTITY,
+            rgba(0, 0, 0, 255),
+            None,
+            &square,
+        );
+        label.clear();
+        let _ = write!(label, "L{}", i + 1);
+        let (x, y) = (p.x as f32 + 10.0, p.y as f32 - 4.0);
+        draw_text(scene, x + 1.0, y + 1.0, &label, rgba(0, 0, 0, 255));
+        draw_text(scene, x, y, &label, rgba(255, 170, 60, 255));
+    }
+}
+
 fn draw_markers(camera: &Camera, input_state: &InputState, scene: &mut Scene) {
     if let Some(ref m) = input_state.start_marker {
         let sp = camera.world_to_screen(m.world_pos);
@@ -860,11 +1016,21 @@ fn draw_debug(
     } else {
         emit_line!("HEUR: (n/a)");
     }
+    if planner.config.algorithm == Algorithm::ContractionHierarchy {
+        if state.show_ch_ranks {
+            emit_line!("GOLD: TOP {}% RANK", CH_TOP_PERCENT);
+        }
+        emit_line!("GREEN/PINK: UP FWD/BWD");
+        emit_line!("YELLOW: PACKED PATH");
+    } else if shows_landmarks(planner) {
+        emit_line!("ORANGE: LANDMARKS");
+    }
 }
 
 pub fn draw_hud(
     scene: &mut Scene,
     config: &PlannerConfig,
+    show_ch_ranks: bool,
     hover_item: Option<MenuItemKind>,
     width: u32,
     _height: u32,
@@ -908,7 +1074,7 @@ pub fn draw_hud(
         + 2
         + 1
         + cost_modes.len()
-        + 2;
+        + 3;
     let panel_h = num_rows as f32 * row_h + padding * 2f32;
 
     let panel_x = width as f32 - panel_w - margin;
@@ -1217,6 +1383,36 @@ pub fn draw_hud(
     layout
         .items
         .push(([item_x, item_y, item_w, row_h], MenuItemKind::Swap));
+    row += 1;
+
+    // CH rank overlay toggle (only meaningful while CH is selected).
+    let item_y = panel_y + padding + row as f32 * row_h;
+    let ranks_enabled = config.algorithm == Algorithm::ContractionHierarchy;
+    if ranks_enabled && matches!(hover_item, Some(MenuItemKind::ChRanks)) {
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            hover_color,
+            None,
+            &vello::kurbo::Rect::new(
+                item_x as f64,
+                item_y as f64,
+                (item_x + item_w) as f64,
+                (item_y + row_h) as f64,
+            ),
+        );
+    }
+    let (label, color) = match (ranks_enabled, show_ch_ranks) {
+        (false, _) => ("  Ranks", rgba(80, 90, 110, 120)),
+        (true, true) => ("> Ranks", text_color),
+        (true, false) => ("  Ranks", dim_color),
+    };
+    draw_row_text(scene, label, item_x, item_y, color);
+    if ranks_enabled {
+        layout
+            .items
+            .push(([item_x, item_y, item_w, row_h], MenuItemKind::ChRanks));
+    }
 
     layout
 }

@@ -11,6 +11,8 @@ const LANDMARK_COUNT: usize = 8;
 /// heuristic is the maximum over all landmarks. It is consistent, so it is safe
 /// for every A* variant including bidirectional ones.
 pub struct Landmarks {
+    /// Landmark node ids, in selection order.
+    pub nodes: Vec<usize>,
     /// from[i][v] = d(L_i, v)
     from: Vec<Vec<f64>>,
     /// to[i][v] = d(v, L_i)
@@ -33,6 +35,7 @@ pub(crate) struct LandmarksBuilder {
     /// closest[v] = min round-trip distance from v to the seed and to every
     /// landmark chosen so far.
     closest: Vec<f64>,
+    nodes: Vec<usize>,
     from: Vec<Vec<f64>>,
     to: Vec<Vec<f64>>,
 }
@@ -54,6 +57,7 @@ impl LandmarksBuilder {
             runs: seed.map(|s| Self::runs_from(graph, s)),
             seeded: false,
             closest: Vec::new(),
+            nodes: Vec::new(),
             from: Vec::new(),
             to: Vec::new(),
         }
@@ -75,11 +79,14 @@ impl LandmarksBuilder {
                     return None;
                 }
             }
-            let [d_from, d_to] = self.runs.take().unwrap().map(|r| r.dist);
+            let [run_from, run_to] = self.runs.take().unwrap();
+            let source = run_from.source;
+            let (d_from, d_to) = (run_from.dist, run_to.dist);
             if self.seeded {
                 for (c, (a, b)) in self.closest.iter_mut().zip(d_from.iter().zip(&d_to)) {
                     *c = c.min(a + b);
                 }
+                self.nodes.push(source);
                 self.from.push(d_from);
                 self.to.push(d_to);
             } else {
@@ -95,6 +102,7 @@ impl LandmarksBuilder {
             }
         }
         Some(Landmarks {
+            nodes: std::mem::take(&mut self.nodes),
             from: std::mem::take(&mut self.from),
             to: std::mem::take(&mut self.to),
         })
