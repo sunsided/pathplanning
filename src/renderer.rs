@@ -104,6 +104,7 @@ fn get_glyph(c: u8) -> [u8; 8] {
         b'-' => [0x00, 0x00, 0x00, 0x7E, 0x00, 0x00, 0x00, 0x00],
         b'.' => [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18],
         b':' => [0x00, 0x18, 0x18, 0x00, 0x00, 0x18, 0x18, 0x00],
+        b'%' => [0x62, 0x66, 0x0C, 0x18, 0x30, 0x66, 0x46, 0x00],
         b'/' => [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x00],
         b'0' => [0x3C, 0x66, 0x6E, 0x76, 0x66, 0x66, 0x3C, 0x00],
         b'1' => [0x18, 0x38, 0x18, 0x18, 0x18, 0x18, 0x7E, 0x00],
@@ -340,6 +341,9 @@ pub fn render(
             debug_overlay,
         );
     }
+
+    // Layer 7b: background preprocessing progress (bottom-left, gone when done).
+    draw_precompute_status(graph, planner, scene, height);
 
     // Layer 8: HUD menu.
     if debug_overlay.hud_visible {
@@ -752,6 +756,37 @@ fn draw_markers(camera: &Camera, input_state: &InputState, scene: &mut Scene) {
     }
 }
 
+fn draw_precompute_status(
+    graph: &RoadGraph,
+    planner: &PlannerState,
+    scene: &mut Scene,
+    height: u32,
+) {
+    let pending: Vec<_> = planner.precompute_pending(graph).collect();
+    let text_color = rgba(180, 220, 255, 255);
+    let shadow_color = rgba(0, 0, 0, 255);
+    let mut line = String::new();
+    let x = 8f32;
+    let mut y = height as f32 - 8.0 - 12.0 * pending.len() as f32;
+    for (kind, mode, done) in pending {
+        line.clear();
+        let mode = match mode {
+            CostMode::ShortestPath => "DIST",
+            CostMode::ShortestTime => "TIME",
+        };
+        let _ = write!(
+            line,
+            "BUILDING {} {} {:.0}%",
+            kind.label(),
+            mode,
+            done * 100.0
+        );
+        draw_text(scene, x + 1.0, y + 1.0, &line, shadow_color);
+        draw_text(scene, x, y, &line, text_color);
+        y += 12.0;
+    }
+}
+
 fn draw_debug(
     graph: &RoadGraph,
     camera: &Camera,
@@ -803,7 +838,10 @@ fn draw_debug(
     emit_line!("LOD: {}", lod_label);
     emit_line!("EDGES_LOD: {}", lod.edges.len());
     emit_line!("DECOR_LOD: {}", lod.decorations.len());
-    emit_line!("STATUS: {}", status_str);
+    match planner.precompute_progress(graph) {
+        Some((what, done)) => emit_line!("STATUS: BUILDING {} {:.0}%", what, done * 100.0),
+        None => emit_line!("STATUS: {}", status_str),
+    }
     emit_line!("EXPANDED: {}", planner.expanded_count);
     emit_line!("PATH: {:.0}M", planner.locked_path_dist_m);
     let time_s = planner.locked_path_time_s;

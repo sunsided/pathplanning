@@ -29,10 +29,14 @@ fn main() {
         .cloned()
         .unwrap_or_else(|| "maps/berlin.osm.pbf".to_string());
 
-    let graph = Arc::new(osm_loader::load_graph(&pbf_path).unwrap_or_else(|e| {
+    let mut graph = osm_loader::load_graph(&pbf_path).unwrap_or_else(|e| {
         eprintln!("Error: could not load '{}': {}", pbf_path, e);
         std::process::exit(1);
-    }));
+    });
+    // Drop non-routable way vertices (~93% of nodes for Berlin) so per-node
+    // planner tables (landmarks, hierarchies) stay small.
+    graph.prune_unused_nodes();
+    let graph = Arc::new(graph);
 
     if let Err(e) = app::run(graph) {
         eprintln!("Error: event loop failed: {e}");

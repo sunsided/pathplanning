@@ -85,7 +85,7 @@ The top-right HUD panel provides clickable menu items to change planner configur
 
 ## Algorithms
 
-Six pathfinding algorithms are available, selectable via the `A`/`P` keys or the HUD menu:
+Nine pathfinding algorithms are available, selectable via the `A`/`P` keys or the HUD menu:
 
 ### A*
 
@@ -93,7 +93,19 @@ The default algorithm. Uses `f = g + h` where `g` is the actual cost from start 
 
 ### Bidirectional A*
 
-Runs two A* searches at once, alternating between a forward search from the start and a backward search from the goal over reversed edges (so one-way streets stay correct). Both use the averaged potential `p(v) = (h(v, goal) - h(start, v)) / 2`, which lets the search stop as soon as the sum of both queue minima reaches the best meeting cost found so far. Optimal for consistent heuristics, and typically expands fewer nodes than unidirectional A* on long routes.
+Runs two A* searches at once: a forward search from the start and a backward search from the goal over reversed edges (so one-way streets stay correct). Each step expands the side with fewer open nodes (Pohl's cardinality rule), which keeps the work balanced when one end sits in a denser part of the network. Both use the averaged potential `p(v) = (h(v, goal) - h(start, v)) / 2`, which lets the search stop as soon as the sum of both queue minima reaches the best meeting cost found so far. Optimal for consistent heuristics, and typically expands fewer nodes than unidirectional A* on long routes.
+
+### MM (Meet in the Middle)
+
+Bidirectional search by Holte et al. (2016). Each side orders its open list by `pr(n) = max(g + h, 2g)` with the full (not halved) heuristic, which guarantees neither search expands a node beyond the midpoint of the optimal cost — the two fronts visibly meet halfway. The side holding the smallest priority expands next; the search stops once the best meeting cost is no larger than `max(C, fmin_f, fmin_b, gmin_f + gmin_b)`. Optimal for admissible heuristics.
+
+### NBS (Near-Optimal Bidirectional Search)
+
+Bidirectional search by Chen et al. (2017). Expands one node from *each* side per step, choosing the pair that minimizes `max(f_f(u), f_b(v), g_f(u) + g_b(v))`, implemented with per-side *waiting* (by f) and *ready* (by g) queues and a rising lower bound. It is proven to expand at most twice as many nodes as any optimal front-to-end bidirectional search. Optimal for admissible heuristics.
+
+### Contraction Hierarchies
+
+Preprocesses the graph by contracting nodes in order of importance (edge difference plus contracted-neighbor count, with lazy updates), inserting shortcut edges wherever a contraction would destroy a shortest path; witness searches are bounded to 64 settled nodes. Queries are a bidirectional Dijkstra that only moves *up* the hierarchy and expand a few hundred nodes instead of hundreds of thousands; shortcuts are unpacked into original edges afterwards. The hierarchy is built per cost mode in the background right after startup and cached on the graph (about 4–8 s for the full Berlin graph in a release build, ~30 s in a debug build, well under a second for the web asset; see [Background preprocessing](#background-preprocessing)). The explored set is scattered across the map, since the search follows the hierarchy rather than geography. Does not use a heuristic.
 
 ### Dijkstra
 
@@ -126,16 +138,21 @@ An asymptotically optimal variant of RRT that improves path quality over time th
 
 ## Heuristics
 
-Heuristics estimate the remaining cost from a node to the goal. They are used by A*, Bidirectional A* and Greedy Best-First. All heuristics account for Web Mercator projection distortion by scaling distances with `cos(mean_latitude)` to return ground-true meters.
+Heuristics estimate the remaining cost from a node to the goal. They are used by A*, Bidirectional A*, MM, NBS and Greedy Best-First. The geometric heuristics account for Web Mercator projection distortion by scaling distances with `cos(mean_latitude)` to return ground-true meters.
 
 | Heuristic | Formula | Admissible? | Description |
 |-----------|---------|-------------|-------------|
 | **Euclidean** | `√(dx² + dy²)` | Yes | Straight-line distance. The most accurate for road networks with free directional movement. Web Mercator coordinates are scaled by `cos(mean_latitude)` to convert back to ground-true meters — without this correction, the heuristic overestimates (especially at Berlin's latitude ~52.5°) and A* returns suboptimal paths. |
 | **Manhattan** | `dx + dy` | Yes | Sum of absolute axis differences. Overestimates on diagonal movement, making it inadmissible but sometimes faster. |
 | **Octile** | `(dmax - dmin) + dmin × √2` | Yes | Accounts for diagonal movement on grids. Admissible and tighter than Manhattan. |
+| **ALT** | `max_L max(d(L,t) − d(L,v), d(v,L) − d(t,L))` | Yes | Landmark lower bounds via the triangle inequality (Goldberg & Harrelson). Eight landmarks are picked by farthest selection within the central strongly connected component, and exact distances to and from each are precomputed per cost mode in the background right after startup (see [Background preprocessing](#background-preprocessing)). Consistent, and much tighter than straight-line distance — especially in time mode, where the geometric heuristics must assume motorway speed everywhere. |
 | **Zero** | `0` | Yes | Reduces A* to Dijkstra. Expands all reachable nodes uniformly. |
 
 Default: **Euclidean**
+
+## Background preprocessing
+
+ALT landmarks and contraction hierarchies are built for both cost modes as soon as the app starts: landmarks first, then hierarchies. Each build is resumable and advances in ~10 ms slices per frame, so the UI stays responsive. Progress is listed bottom-left (`BUILDING HIERARCHY TIME 42%`), and each line disappears once its build is done. If a search needs a build that is not finished yet, that build jumps the queue and the search starts as soon as it completes; partially built jobs are never thrown away.
 
 ## Cost Functions
 
@@ -176,7 +193,7 @@ This ensures the heuristic remains consistent with the cost function, preserving
 |-----------|-------------|
 | `graph.rs` | Directed road graph with nodes, edges, and road classifications |
 | `osm_loader.rs` | OSM PBF file parser and graph construction |
-| `planner/` | Pathfinding algorithms (A*, Bidirectional A*, Dijkstra, Greedy, RRT, RRT*) with configurable heuristics and cost modes |
+| `planner/` | Pathfinding algorithms (A*, Bidirectional A*, MM, NBS, Contraction Hierarchies, Dijkstra, Greedy, RRT, RRT*) with configurable heuristics and cost modes |
 | `spatial_index.rs` | Nearest-node lookup for marker snapping |
 | `view_index.rs` | R*-tree spatial index for viewport-based edge queries |
 | `lod.rs` | LOD pyramid for multi-scale rendering |

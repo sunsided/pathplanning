@@ -390,6 +390,8 @@ impl App {
                     PlannerStatus::Searching | PlannerStatus::FirstMatchFound
                 ) {
                     self.planner.step(&self.graph, 500);
+                } else {
+                    self.planner.precompute_background(&self.graph);
                 }
                 self.render_frame();
             }
@@ -624,7 +626,11 @@ impl App {
         let planner_animating = matches!(
             self.planner.status,
             PlannerStatus::Searching | PlannerStatus::FirstMatchFound
-        );
+        ) || self
+            .planner
+            .precompute_pending(&self.graph)
+            .next()
+            .is_some();
         if (self.needs_redraw || planner_animating)
             && let Some(window) = self.window.as_ref()
         {

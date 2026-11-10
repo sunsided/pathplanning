@@ -129,6 +129,9 @@ pub struct RoadGraph {
     pub node_out_degree: Vec<u8>,
     /// Non-routable visual context (buildings, landuse, pedestrian plazas).
     pub decorations: DecorationLayer,
+    /// Lazily built planner data (reverse adjacency, landmarks, hierarchies).
+    #[serde(skip)]
+    pub(crate) precomputed: crate::planner::cache::Precomputed,
 }
 
 /// Serializes world-space polylines as an absolute first point plus `f32`
@@ -253,6 +256,7 @@ impl RoadGraph {
                 neighbors.len().min(u8::MAX as usize) as u8
             })
             .collect();
+        self.precomputed = Default::default();
     }
 
     pub fn node_count(&self) -> usize {

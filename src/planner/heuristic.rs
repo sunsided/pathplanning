@@ -9,6 +9,8 @@ pub enum Heuristic {
     Euclidean,
     Manhattan,
     Octile,
+    /// Landmark lower bounds (ALT); precomputed per cost mode on first use.
+    Alt,
 }
 
 impl Heuristic {
@@ -18,6 +20,7 @@ impl Heuristic {
             Heuristic::Euclidean => "Euclidean",
             Heuristic::Manhattan => "Manhattan",
             Heuristic::Octile => "Octile",
+            Heuristic::Alt => "ALT (Landmarks)",
         }
     }
 
@@ -27,6 +30,7 @@ impl Heuristic {
             Heuristic::Euclidean => "Euclid",
             Heuristic::Manhattan => "Manhat",
             Heuristic::Octile => "Octile",
+            Heuristic::Alt => "ALT",
         }
     }
 
@@ -35,6 +39,7 @@ impl Heuristic {
             Heuristic::Euclidean,
             Heuristic::Manhattan,
             Heuristic::Octile,
+            Heuristic::Alt,
             Heuristic::Zero,
         ]
     }
@@ -43,6 +48,9 @@ impl Heuristic {
         let n = graph.nodes.len();
         if from >= n || to >= n {
             return 0.0;
+        }
+        if *self == Heuristic::Alt {
+            return graph.landmarks(mode).lower_bound(from, to);
         }
         let p1 = graph.nodes[from].world_pos;
         let p2 = graph.nodes[to].world_pos;
@@ -56,7 +64,7 @@ impl Heuristic {
         let dy = (p1[1] - p2[1]).abs() * scale;
 
         let dist_m = match self {
-            Heuristic::Zero => 0.0,
+            Heuristic::Zero | Heuristic::Alt => 0.0,
             Heuristic::Euclidean => (dx * dx + dy * dy).sqrt(),
             Heuristic::Manhattan => dx + dy,
             Heuristic::Octile => {
@@ -140,7 +148,8 @@ mod tests {
     #[test]
     fn test_all_variants() {
         let all = Heuristic::all();
-        assert_eq!(all.len(), 4);
+        assert_eq!(all.len(), 5);
+        assert!(all.contains(&Heuristic::Alt));
         assert!(all.contains(&Heuristic::Zero));
         assert!(all.contains(&Heuristic::Euclidean));
         assert!(all.contains(&Heuristic::Manhattan));
