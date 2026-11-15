@@ -31,7 +31,7 @@ jobs:
         uses: raven-actions/actionlint@v2
 
       - name: Audit workflows
-        uses: zizmorcore/zizmor-action@v0.2.0
+        uses: zizmorcore/zizmor-action@v0.8.1
         with:
           advanced-security: false
 
